@@ -1,4 +1,4 @@
-# Dudji's Hackbook
+# My hackbook
 
 Personal cybersecurity documentation. Covers attack techniques and tooling.
 

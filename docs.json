@@ -67,9 +67,8 @@
         "url": "playbook/index",
         "groups": [
           {
-            "group": "Playbook",
-            "root": "playbook/index",
-            "pages": []
+            "group": "Overview",
+            "pages": ["playbook/index"]
           },
           {
             "group": "Recon",
@@ -98,9 +97,8 @@
         "url": "attacks/index",
         "groups": [
           {
-            "group": "Attacks",
-            "root": "attacks/index",
-            "pages": []
+            "group": "Overview",
+            "pages": ["attacks/index"]
           },
           {
             "group": "Web",
@@ -132,9 +130,8 @@
         "url": "tech/index",
         "groups": [
           {
-            "group": "Tech",
-            "root": "tech/index",
-            "pages": []
+            "group": "Overview",
+            "pages": ["tech/index"]
           },
           {
             "group": "Linux",
@@ -153,13 +150,8 @@
         "url": "payloads/index",
         "groups": [
           {
-            "group": "Payloads",
-            "root": "payloads/index",
-            "pages": [
-              "payloads/reverse-shells",
-              "payloads/web-shells",
-              "payloads/file-transfers"
-            ]
+            "group": "Overview",
+            "pages": ["payloads/index"]
           }
         ]
       },
@@ -168,9 +160,8 @@
         "url": "tools/index",
         "groups": [
           {
-            "group": "Tools",
-            "root": "tools/index",
-            "pages": ["tools/nmap", "tools/burp-suite", "tools/metasploit"]
+            "group": "Overview",
+            "pages": ["tools/index"]
           }
         ]
       }
@@ -191,17 +182,18 @@
         "items": [
           { "label": "Home", "href": "https://dudji.com" },
           { "label": "Contact", "href": "https://dudji.com/contact" },
-          { "label": "Writeups", "href": "https://writeups.dudji.com" }
+          { "label": "Writeups", "href": "https://writeups.dudji.com" },
+          { "label": "Books", "href": "https://Books.Dudji.com" }
         ]
       },
       {
         "header": "Hackbook",
         "items": [
-          { "label": "Playbook", "href": "/docs/playbook" },
-          { "label": "Attacks", "href": "/docs/attacks" },
-          { "label": "Tech", "href": "/docs/tech" },
-          { "label": "Payloads", "href": "/docs/payloads" },
-          { "label": "Tools", "href": "/docs/tools" }
+          { "label": "Playbook", "href": "/playbook" },
+          { "label": "Attacks", "href": "/attacks" },
+          { "label": "Tech", "href": "/tech" },
+          { "label": "Payloads", "href": "/payloads" },
+          { "label": "Tools", "href": "/tools" }
         ]
       }
     ],
