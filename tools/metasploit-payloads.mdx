@@ -1,0 +1,273 @@
+---
+title: "Metasploit Payloads"
+description: "Payload families, staged vs single payloads, and payload selection."
+---
+
+## Payloads
+
+A payload in Metasploit is the module that works with an exploit to execute
+post-exploitation code on the target, often resulting in shell/session access.
+
+- The exploit bypasses the vulnerable service logic.
+- The payload runs on the target and establishes/maintains access.
+
+Metasploit payload modules are grouped into three types:
+
+1. Singles
+2. Stagers
+3. Stages
+
+Whether a payload is staged is indicated by `/` in the payload name.
+
+Examples:
+
+- `windows/shell_bind_tcp` -> single payload (no staged split)
+- `windows/shell/bind_tcp` -> staged payload (`bind_tcp` stager + `shell` stage)
+
+### Singles
+
+Single payloads are self-contained. They include all shellcode needed for the
+task in one object.
+
+- Usually more stable because everything is inline.
+- Can become too large for some exploit constraints.
+- Execute immediately once delivered.
+
+Typical outcomes include launching a process, executing a command, or returning
+a shell directly.
+
+### Stagers
+
+Stagers are compact bootstrap payloads that establish a communication channel
+from victim to attacker, then prepare delivery of a larger stage.
+
+- Designed to be small and reliable.
+- Commonly initialize reverse or bind channels.
+- Metasploit can auto-select suitable stagers per scenario.
+
+#### Windows NX vs NO-NX Stagers
+
+- Reliability concerns exist on NX/DEP-protected systems.
+- NX-compatible stagers are larger (for example, `VirtualAlloc`-style memory handling).
+- Current defaults generally favor NX and newer Windows compatibility.
+
+### Stages
+
+Stages are the larger payload components fetched after stager execution. They
+provide advanced capabilities such as Meterpreter and VNC injection.
+
+Operationally:
+
+- A single `recv()` may fail for large payloads.
+- The initial stager can receive an intermediate downloader.
+- The intermediate component completes full stage download into memory.
+
+## Staged Payloads
+
+A staged payload breaks exploitation into chained functional parts to reduce
+initial size and improve delivery reliability.
+
+- `Stage0`: initial shellcode (for example `reverse_tcp`, `reverse_https`, `bind_tcp`)
+- `Stage1`: larger functional component delivered after channel setup
+
+### MSF: Staged Payloads
+
+```shellsession
+msf6 > show payloads
+
+<SNIP>
+
+535  windows/x64/meterpreter/bind_ipv6_tcp                                normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 IPv6 Bind TCP Stager
+536  windows/x64/meterpreter/bind_ipv6_tcp_uuid                           normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 IPv6 Bind TCP Stager with UUID Support
+537  windows/x64/meterpreter/bind_named_pipe                              normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Bind Named Pipe Stager
+538  windows/x64/meterpreter/bind_tcp                                     normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Bind TCP Stager
+539  windows/x64/meterpreter/bind_tcp_rc4                                 normal  No     Windows Meterpreter (Reflective Injection x64), Bind TCP Stager (RC4 Stage Encryption, Metasm)
+540  windows/x64/meterpreter/bind_tcp_uuid                                normal  No     Windows Meterpreter (Reflective Injection x64), Bind TCP Stager with UUID Support (Windows x64)
+541  windows/x64/meterpreter/reverse_http                                 normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (wininet)
+542  windows/x64/meterpreter/reverse_https                                normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (wininet)
+543  windows/x64/meterpreter/reverse_named_pipe                           normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse Named Pipe (SMB) Stager
+544  windows/x64/meterpreter/reverse_tcp                                  normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse TCP Stager
+545  windows/x64/meterpreter/reverse_tcp_rc4                              normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager (RC4 Stage Encryption, Metasm)
+546  windows/x64/meterpreter/reverse_tcp_uuid                             normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager with UUID Support (Windows x64)
+547  windows/x64/meterpreter/reverse_winhttp                              normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (winhttp)
+548  windows/x64/meterpreter/reverse_winhttps                             normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTPS Stager (winhttp)
+
+<SNIP>
+```
+
+Reverse connections are often effective because they leverage outbound traffic
+paths that are commonly more permissive than inbound filtering.
+
+## Searching for Payloads
+
+To choose a payload, start with the intended objective on the target. For
+example, Meterpreter payloads are commonly selected for flexible post-exploitation
+workflows.
+
+### MSF: List Payloads
+
+```shellsession
+msf6 > show payloads
+
+Payloads
+========
+
+  #    Name                                                Disclosure Date  Rank    Check  Description
+-    ----                                                ---------------  ----    -----  -----------
+  0    aix/ppc/shell_bind_tcp                                               manual  No     AIX Command Shell, Bind TCP Inline
+  1    aix/ppc/shell_find_port                                              manual  No     AIX Command Shell, Find Port Inline
+  2    aix/ppc/shell_interact                                               manual  No     AIX execve Shell for inetd
+  3    aix/ppc/shell_reverse_tcp                                            manual  No     AIX Command Shell, Reverse TCP Inline
+  4    android/meterpreter/reverse_http                                     manual  No     Android Meterpreter, Android Reverse HTTP Stager
+  5    android/meterpreter/reverse_https                                    manual  No     Android Meterpreter, Android Reverse HTTPS Stager
+  6    android/meterpreter/reverse_tcp                                      manual  No     Android Meterpreter, Android Reverse TCP Stager
+  7    android/meterpreter_reverse_http                                     manual  No     Android Meterpreter Shell, Reverse HTTP Inline
+  8    android/meterpreter_reverse_https                                    manual  No     Android Meterpreter Shell, Reverse HTTPS Inline
+  9    android/meterpreter_reverse_tcp                                      manual  No     Android Meterpreter Shell, Reverse TCP Inline
+  10   android/shell/reverse_http                                           manual  No     Command Shell, Android Reverse HTTP Stager
+  11   android/shell/reverse_https                                          manual  No     Command Shell, Android Reverse HTTPS Stager
+  12   android/shell/reverse_tcp                                            manual  No     Command Shell, Android Reverse TCP Stager
+  13   apple_ios/aarch64/meterpreter_reverse_http                           manual  No     Apple_iOS Meterpreter, Reverse HTTP Inline
+
+<SNIP>
+
+  557  windows/x64/vncinject/reverse_tcp                                    manual  No     Windows x64 VNC Server (Reflective Injection), Windows x64 Reverse TCP Stager
+  558  windows/x64/vncinject/reverse_tcp_rc4                                manual  No     Windows x64 VNC Server (Reflective Injection), Reverse TCP Stager (RC4 Stage Encryption, Metasm)
+  559  windows/x64/vncinject/reverse_tcp_uuid                               manual  No     Windows x64 VNC Server (Reflective Injection), Reverse TCP Stager with UUID Support (Windows x64)
+  560  windows/x64/vncinject/reverse_winhttp                                manual  No     Windows x64 VNC Server (Reflective Injection), Windows x64 Reverse HTTP Stager (winhttp)
+  561  windows/x64/vncinject/reverse_winhttps                               manual  No     Windows x64 VNC Server (Reflective Injection), Windows x64 Reverse HTTPS Stager (winhttp)
+```
+
+### Windows x64 Meterpreter Block (Example)
+
+```shellsession
+515  windows/x64/meterpreter/bind_ipv6_tcp                                manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 IPv6 Bind TCP Stager
+516  windows/x64/meterpreter/bind_ipv6_tcp_uuid                           manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 IPv6 Bind TCP Stager with UUID Support
+517  windows/x64/meterpreter/bind_named_pipe                              manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Bind Named Pipe Stager
+518  windows/x64/meterpreter/bind_tcp                                     manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Bind TCP Stager
+519  windows/x64/meterpreter/bind_tcp_rc4                                 manual  No     Windows Meterpreter (Reflective Injection x64), Bind TCP Stager (RC4 Stage Encryption, Metasm)
+520  windows/x64/meterpreter/bind_tcp_uuid                                manual  No     Windows Meterpreter (Reflective Injection x64), Bind TCP Stager with UUID Support (Windows x64)
+521  windows/x64/meterpreter/reverse_http                                 manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (wininet)
+522  windows/x64/meterpreter/reverse_https                                manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (wininet)
+523  windows/x64/meterpreter/reverse_named_pipe                           manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse Named Pipe (SMB) Stager
+524  windows/x64/meterpreter/reverse_tcp                                  manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse TCP Stager
+525  windows/x64/meterpreter/reverse_tcp_rc4                              manual  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager (RC4 Stage Encryption, Metasm)
+526  windows/x64/meterpreter/reverse_tcp_uuid                             manual  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager with UUID Support (Windows x64)
+527  windows/x64/meterpreter/reverse_winhttp                              manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (winhttp)
+528  windows/x64/meterpreter/reverse_winhttps                             manual  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTPS Stager (winhttp)
+529  windows/x64/meterpreter_bind_named_pipe                              manual  No     Windows Meterpreter Shell, Bind Named Pipe Inline (x64)
+530  windows/x64/meterpreter_bind_tcp                                     manual  No     Windows Meterpreter Shell, Bind TCP Inline (x64)
+531  windows/x64/meterpreter_reverse_http                                 manual  No     Windows Meterpreter Shell, Reverse HTTP Inline (x64)
+532  windows/x64/meterpreter_reverse_https                                manual  No     Windows Meterpreter Shell, Reverse HTTPS Inline (x64)
+533  windows/x64/meterpreter_reverse_ipv6_tcp                             manual  No     Windows Meterpreter Shell, Reverse TCP Inline (IPv6) (x64)
+534  windows/x64/meterpreter_reverse_tcp                                  manual  No     Windows Meterpreter Shell, Reverse TCP Inline x64
+```
+
+### MSF: Searching for Specific Payloads
+
+Use `grep` in `msfconsole` to reduce large output.
+
+```shellsession
+msf6 exploit(windows/smb/ms17_010_eternalblue) > grep meterpreter show payloads
+
+  6   payload/windows/x64/meterpreter/bind_ipv6_tcp                        normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 IPv6 Bind TCP Stager
+  7   payload/windows/x64/meterpreter/bind_ipv6_tcp_uuid                   normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 IPv6 Bind TCP Stager with UUID Support
+  8   payload/windows/x64/meterpreter/bind_named_pipe                      normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Bind Named Pipe Stager
+  9   payload/windows/x64/meterpreter/bind_tcp                             normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Bind TCP Stager
+  10  payload/windows/x64/meterpreter/bind_tcp_rc4                         normal  No     Windows Meterpreter (Reflective Injection x64), Bind TCP Stager (RC4 Stage Encryption, Metasm)
+  11  payload/windows/x64/meterpreter/bind_tcp_uuid                        normal  No     Windows Meterpreter (Reflective Injection x64), Bind TCP Stager with UUID Support (Windows x64)
+  12  payload/windows/x64/meterpreter/reverse_http                         normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (wininet)
+  13  payload/windows/x64/meterpreter/reverse_https                        normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (wininet)
+  14  payload/windows/x64/meterpreter/reverse_named_pipe                   normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse Named Pipe (SMB) Stager
+  15  payload/windows/x64/meterpreter/reverse_tcp                          normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse TCP Stager
+  16  payload/windows/x64/meterpreter/reverse_tcp_rc4                      normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager (RC4 Stage Encryption, Metasm)
+  17  payload/windows/x64/meterpreter/reverse_tcp_uuid                     normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager with UUID Support (Windows x64)
+  18  payload/windows/x64/meterpreter/reverse_winhttp                      normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTP Stager (winhttp)
+  19  payload/windows/x64/meterpreter/reverse_winhttps                     normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse HTTPS Stager (winhttp)
+
+
+msf6 exploit(windows/smb/ms17_010_eternalblue) > grep -c meterpreter show payloads
+
+[*] 14
+```
+
+Chaining filters:
+
+```shellsession
+msf6 exploit(windows/smb/ms17_010_eternalblue) > grep meterpreter grep reverse_tcp show payloads
+
+  15  payload/windows/x64/meterpreter/reverse_tcp                          normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse TCP Stager
+  16  payload/windows/x64/meterpreter/reverse_tcp_rc4                      normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager (RC4 Stage Encryption, Metasm)
+  17  payload/windows/x64/meterpreter/reverse_tcp_uuid                     normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager with UUID Support (Windows x64)
+
+
+msf6 exploit(windows/smb/ms17_010_eternalblue) > grep -c meterpreter grep reverse_tcp show payloads
+
+[*] 3
+```
+
+## Selecting Payloads
+
+After choosing an exploit module, set a payload by index:
+
+`set payload <no.>`
+
+### MSF: Select Payload
+
+```shellsession
+msf6 exploit(windows/smb/ms17_010_eternalblue) > show options
+
+Module options (exploit/windows/smb/ms17_010_eternalblue):
+
+  Name           Current Setting  Required  Description
+  ----           ---------------  --------  -----------
+  RHOSTS                          yes       The target host(s), range CIDR identifier, or hosts file with syntax 'file:<path>'
+  RPORT          445              yes       The target port (TCP)
+  SMBDomain      .                no        (Optional) The Windows domain to use for authentication
+  SMBPass                         no        (Optional) The password for the specified username
+  SMBUser                         no        (Optional) The username to authenticate as
+  VERIFY_ARCH    true             yes       Check if remote architecture matches exploit Target.
+  VERIFY_TARGET  true             yes       Check if remote OS matches exploit Target.
+
+
+Exploit target:
+
+  Id  Name
+  --  ----
+  0   Windows 7 and Server 2008 R2 (x64) All Service Packs
+
+
+
+msf6 exploit(windows/smb/ms17_010_eternalblue) > grep meterpreter grep reverse_tcp show payloads
+
+  15  payload/windows/x64/meterpreter/reverse_tcp                          normal  No     Windows Meterpreter (Reflective Injection x64), Windows x64 Reverse TCP Stager
+  16  payload/windows/x64/meterpreter/reverse_tcp_rc4                      normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager (RC4 Stage Encryption, Metasm)
+  17  payload/windows/x64/meterpreter/reverse_tcp_uuid                     normal  No     Windows Meterpreter (Reflective Injection x64), Reverse TCP Stager with UUID Support (Windows x64)
+
+
+msf6 exploit(windows/smb/ms17_010_eternalblue) > set payload 15
+
+payload => windows/x64/meterpreter/reverse_tcp
+```
+
+## Payload Types
+
+The table below lists common payload families for Windows targets.
+
+| Payload                           | Description                                   |
+| --------------------------------- | --------------------------------------------- |
+| `generic/custom`                  | Generic listener, multi-use                   |
+| `generic/shell_bind_tcp`          | Generic listener, standard shell, bind TCP    |
+| `generic/shell_reverse_tcp`       | Generic listener, standard shell, reverse TCP |
+| `windows/x64/exec`                | Executes an arbitrary command (Windows x64)   |
+| `windows/x64/loadlibrary`         | Loads an arbitrary x64 library path           |
+| `windows/x64/messagebox`          | Spawns a customizable MessageBox dialog       |
+| `windows/x64/shell_reverse_tcp`   | Standard shell, single payload, reverse TCP   |
+| `windows/x64/shell/reverse_tcp`   | Standard shell, staged payload, reverse TCP   |
+| `windows/x64/shell/bind_ipv6_tcp` | Standard shell, staged payload, IPv6 bind TCP |
+| `windows/x64/meterpreter/$`       | Meterpreter family and variants               |
+| `windows/x64/powershell/$`        | Interactive PowerShell family and variants    |
+| `windows/x64/vncinject/$`         | VNC reflective injection family and variants  |
+
+Other well-known operational payload ecosystems also exist outside default
+Metasploit modules. Those are out of scope here.

