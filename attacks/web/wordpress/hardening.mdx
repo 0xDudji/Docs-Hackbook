@@ -1,0 +1,80 @@
+---
+title: "WordPress Hardening"
+description: "Practical controls to reduce WordPress attack surface and limit impact."
+---
+
+## WordPress Hardening
+
+### Best Practices
+
+Below are some best practices for preventing attacks against a WordPress site.
+
+### Perform Regular Updates
+
+This is a key principle for any application or system and can greatly reduce the risk of a successful attack. Make sure that WordPress core, as well as all installed plugins and themes, are kept up-to-date. Researchers continuously find flaws in third-party WordPress plugins. Some hosting providers perform continuous automatic updates of WordPress core. The WordPress admin console will usually prompt when plugins or themes need to be updated or when WordPress itself requires an upgrade.
+
+You can modify `wp-config.php` to enable automatic updates by inserting the following lines:
+
+```php
+define( 'WP_AUTO_UPDATE_CORE', true );
+```
+
+```php
+add_filter( 'auto_update_plugin', '__return_true' );
+```
+
+```php
+add_filter( 'auto_update_theme', '__return_true' );
+```
+
+### Plugin and Theme Management
+
+Only install trusted themes and plugins from the WordPress.org website. Before installing a plugin or theme, check its reviews, popularity, number of installs, and last update date. If either has not been updated in years, it may no longer be maintained and may contain unpatched vulnerabilities. Routinely audit the site and remove any unused themes and plugins.
+
+### Enhance WordPress Security
+
+Several WordPress security plugins can be used to enhance website security. These plugins can be used as a Web Application Firewall (WAF), malware scanner, monitoring and activity auditing tool, brute-force protection layer, and strong password enforcement control.
+
+Sucuri Security ([wordpress.org/plugins/sucuri-scanner/](https://wordpress.org/plugins/sucuri-scanner/))
+
+This plugin is a security suite consisting of the following features:
+
+- Security Activity Auditing
+- File Integrity Monitoring
+- Remote Malware Scanning
+- Blacklist Monitoring
+
+iThemes Security ([wordpress.org/plugins/better-wp-security/](https://wordpress.org/plugins/better-wp-security/))
+
+iThemes Security provides 30+ ways to secure and protect a WordPress site, such as:
+
+- Two-Factor Authentication (2FA)
+- WordPress Salts and Security Keys
+- Google reCAPTCHA
+- User Action Logging
+
+Wordfence Security ([wordpress.org/plugins/wordfence/](https://wordpress.org/plugins/wordfence/))
+
+Wordfence Security consists of an endpoint firewall and malware scanner.
+
+- The WAF identifies and blocks malicious traffic.
+- The premium version provides real-time firewall rule and malware signature updates.
+- Premium also enables real-time IP blacklisting to block requests from known malicious IPs.
+
+### User Management
+
+Users are often targeted because they are generally seen as the weakest link in an organization. The following user-related best practices improve the overall security of a WordPress site:
+
+- Disable the standard admin user and create accounts with difficult-to-guess usernames.
+- Enforce strong passwords.
+- Enable and enforce two-factor authentication (2FA) for all users.
+- Restrict user access based on least privilege.
+- Periodically audit user rights and access. Remove unused accounts or revoke access that is no longer needed.
+
+### Configuration Management
+
+Certain configuration changes can increase the overall security posture of a WordPress installation:
+
+- Install a plugin that disallows user enumeration so attackers cannot gather valid usernames for password spraying.
+- Limit login attempts to prevent password brute-force attacks.
+- Rename `wp-login.php` or relocate the login page so it is not broadly exposed, or allow access only from specific IP addresses.

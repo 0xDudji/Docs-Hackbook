@@ -110,6 +110,16 @@
             "pages": [
               "attacks/web/local-file-inclusion",
               {
+                "group": "WordPress",
+                "root": "attacks/web/wordpress/index",
+                "pages": [
+                  "attacks/web/wordpress/fundamentals",
+                  "attacks/web/wordpress/enumeration",
+                  "attacks/web/wordpress/exploitation",
+                  "attacks/web/wordpress/hardening"
+                ]
+              },
+              {
                 "group": "SQL Injection",
                 "root": "attacks/web/sql-injection",
                 "pages": [
@@ -171,12 +181,12 @@
           {
             "group": "Network Scanning",
             "root": "tools/network-scanning/index",
-            "pages": ["tools/nmap"]
+            "pages": ["tools/network-scanning/nmap"]
           },
           {
             "group": "Web Testing",
             "root": "tools/web-testing/index",
-            "pages": ["tools/burp-suite"]
+            "pages": ["tools/web-testing/burp-suite"]
           },
           {
             "group": "Exploitation Frameworks",
@@ -184,16 +194,16 @@
             "pages": [
               {
                 "group": "Metasploit",
-                "root": "tools/metasploit",
+                "root": "tools/exploitation-frameworks/metasploit/index",
                 "pages": [
-                  "tools/metasploit-core",
-                  "tools/metasploit-payloads",
-                  "tools/metasploit-msfvenom",
-                  "tools/metasploit-encoders",
-                  "tools/metasploit-sessions",
-                  "tools/metasploit-meterpreter",
-                  "tools/metasploit-evasion",
-                  "tools/metasploit-plugins"
+                  "tools/exploitation-frameworks/metasploit/core",
+                  "tools/exploitation-frameworks/metasploit/payloads",
+                  "tools/exploitation-frameworks/metasploit/msfvenom",
+                  "tools/exploitation-frameworks/metasploit/encoders",
+                  "tools/exploitation-frameworks/metasploit/sessions",
+                  "tools/exploitation-frameworks/metasploit/meterpreter",
+                  "tools/exploitation-frameworks/metasploit/evasion",
+                  "tools/exploitation-frameworks/metasploit/plugins"
                 ]
               }
             ]

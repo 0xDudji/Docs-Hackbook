@@ -1,0 +1,155 @@
+---
+title: "WordPress Fundamentals"
+description: "Default WordPress structure, core files, configuration, and role model."
+---
+
+## Installation Requirements
+
+WordPress requires a fully installed and configured LAMP stack before installation on a Linux host:
+
+- Linux operating system
+- Apache HTTP Server
+- MySQL database
+- PHP
+
+After installation, supporting files and directories are typically accessible from the webroot at `/var/www/html`.
+
+## File Structure
+
+Below is the directory structure of a default WordPress install, showing key files and subdirectories needed for the site to function.
+
+```shellsession
+Dudji@htb[/htb]$ tree -L 1 /var/www/html
+.
+|-- index.php
+|-- license.txt
+|-- readme.html
+|-- wp-activate.php
+|-- wp-admin
+|-- wp-blog-header.php
+|-- wp-comments-post.php
+|-- wp-config.php
+|-- wp-config-sample.php
+|-- wp-content
+|-- wp-cron.php
+|-- wp-includes
+|-- wp-links-opml.php
+|-- wp-load.php
+|-- wp-login.php
+|-- wp-mail.php
+|-- wp-settings.php
+|-- wp-signup.php
+|-- wp-trackback.php
+`-- xmlrpc.php
+```
+
+## Key WordPress Files
+
+The root directory contains files needed for WordPress to function correctly.
+
+- `index.php`: Homepage entry point.
+- `license.txt`: Useful installation and version information.
+- `wp-activate.php`: Handles email activation during new site setup.
+- `wp-admin`: Contains administrator login and backend dashboard functionality.
+- `xmlrpc.php`: XML-RPC endpoint for remote communication over HTTP/XML. This has largely been replaced by the WordPress REST API.
+
+Common login paths include:
+
+- `/wp-admin/login.php`
+- `/wp-admin/wp-login.php`
+- `/login.php`
+- `/wp-login.php`
+
+Administrators can also rename login-related paths to make discovery harder.
+
+## WordPress Configuration File
+
+The `wp-config.php` file includes database connection settings, authentication keys and salts, table prefix configuration, and debug settings.
+
+```php
+<?php
+/** <SNIP> */
+/** The name of the database for WordPress */
+define( 'DB_NAME', 'database_name_here' );
+
+/** MySQL database username */
+define( 'DB_USER', 'username_here' );
+
+/** MySQL database password */
+define( 'DB_PASSWORD', 'password_here' );
+
+/** MySQL hostname */
+define( 'DB_HOST', 'localhost' );
+
+/** Authentication Unique Keys and Salts */
+/* <SNIP> */
+define( 'AUTH_KEY',         'put your unique phrase here' );
+define( 'SECURE_AUTH_KEY',  'put your unique phrase here' );
+define( 'LOGGED_IN_KEY',    'put your unique phrase here' );
+define( 'NONCE_KEY',        'put your unique phrase here' );
+define( 'AUTH_SALT',        'put your unique phrase here' );
+define( 'SECURE_AUTH_SALT', 'put your unique phrase here' );
+define( 'LOGGED_IN_SALT',   'put your unique phrase here' );
+define( 'NONCE_SALT',       'put your unique phrase here' );
+
+/** WordPress Database Table prefix */
+$table_prefix = 'wp_';
+
+/** For developers: WordPress debugging mode. */
+/** <SNIP> */
+define( 'WP_DEBUG', false );
+
+/** Absolute path to the WordPress directory. */
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+
+/** Sets up WordPress vars and included files. */
+require_once ABSPATH . 'wp-settings.php';
+```
+
+## Key WordPress Directories
+
+The `wp-content` directory is where plugins and themes are stored. Its `uploads` subdirectory usually contains user-uploaded files.
+
+These paths should always be enumerated carefully because they may expose sensitive files, insecure upload handling, or vulnerable components.
+
+```shellsession
+Dudji@htb[/htb]$ tree -L 1 /var/www/html/wp-content
+.
+|-- index.php
+|-- plugins
+`-- themes
+```
+
+The `wp-includes` directory stores core WordPress components such as certificates, fonts, JavaScript files, and widgets.
+
+```shellsession
+Dudji@htb[/htb]$ tree -L 1 /var/www/html/wp-includes
+.
+|-- <SNIP>
+|-- theme.php
+|-- update.php
+|-- user.php
+|-- vars.php
+|-- version.php
+|-- widgets
+|-- widgets.php
+|-- wlwmanifest.xml
+|-- wp-db.php
+`-- wp-diff.php
+```
+
+## WordPress User Roles
+
+There are five default user role types in a standard WordPress installation.
+
+| Role          | Description                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Administrator | Full administrative access to the website, including user management, content management, and source-level changes. |
+| Editor        | Can publish and manage posts, including posts created by other users.                                               |
+| Author        | Can publish and manage only their own posts.                                                                        |
+| Contributor   | Can write and manage their own posts but cannot publish them.                                                       |
+| Subscriber    | Standard low-privilege account that can read content and edit its own profile.                                      |
+
+Gaining administrator access is usually the most direct path to server-side code execution. However, editor and author accounts may still expose meaningful attack paths when vulnerable plugins or role-misconfigured features are present.
