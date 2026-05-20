@@ -5,11 +5,19 @@ description: "Linux internals from an offensive security perspective."
 
 <Columns cols={2}>
   <Card
-    title="System Fundamentals"
-    icon="terminal"
-    href="/tech/linux/system-fundamentals"
+    title="System Enumeration"
+    icon="compass"
+    href="/tech/linux/system-enumeration"
   >
-    File system, processes, permissions, and core Linux concepts.
+    Find users, services, kernel details, and the most likely privilege
+    escalation paths.
+  </Card>
+  <Card
+    title="User & Group Management"
+    icon="users"
+    href="/tech/linux/user-management"
+  >
+    Accounts, groups, sudo rights, and user-based attack paths.
   </Card>
   <Card
     title="Authentication & Authorization"
@@ -19,11 +27,32 @@ description: "Linux internals from an offensive security perspective."
     PAM, /etc/passwd, /etc/shadow, SSH keys, and sudo.
   </Card>
   <Card
-    title="System Services"
-    icon="server"
-    href="/tech/linux/system-services"
+    title="Permission Analysis"
+    icon="shield-check"
+    href="/tech/linux/permissions"
   >
-    Systemd, cron, init, and service management.
+    Read/write/execute, SUID/SGID, and permission misconfigurations.
+  </Card>
+  <Card
+    title="Process & Service Management"
+    icon="server"
+    href="/tech/linux/processes-services"
+  >
+    Running processes, systemd services, cron, and service attack surface.
+  </Card>
+  <Card
+    title="Network Configuration"
+    icon="network-wired"
+    href="/tech/linux/network-configuration"
+  >
+    Interfaces, routing, pivot points, and reachable hosts.
+  </Card>
+  <Card
+    title="Finding Files & Directories"
+    icon="folder"
+    href="/tech/linux/filesystem-navigation"
+  >
+    Search the filesystem for credentials, configs, and sensitive data.
   </Card>
   <Card
     title="Storage & Devices"
@@ -31,6 +60,26 @@ description: "Linux internals from an offensive security perspective."
     href="/tech/linux/storage-devices"
   >
     Disks, partitions, mount points, and device files.
+  </Card>
+  <Card title="System Logs" icon="file" href="/tech/linux/system-logs">
+    Log sources, detection surface, and evidence you need to cover.
+  </Card>
+  <Card
+    title="Output Filtering & Text Processing"
+    icon="terminal"
+    href="/tech/linux/filtering-text-processing"
+  >
+    grep, awk, sed, cut, and shell pipelines for extracting the signal.
+  </Card>
+  <Card
+    title="Security & Hardening"
+    icon="shield-exclamation"
+    href="/tech/linux/security-hardening"
+  >
+    SELinux, AppArmor, patch posture, and hardening gaps.
+  </Card>
+  <Card title="Pillaging" icon="shield" href="/tech/linux/pillaging">
+    Extract credentials, secrets, and sensitive data once you have access.
   </Card>
   <Card
     title="Bash Scripting"

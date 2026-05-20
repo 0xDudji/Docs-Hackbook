@@ -1,0 +1,331 @@
+# Output Filtering & Text Processing
+
+> Raw command output is noise. Your job is to extract the signal. Master these tools and you'll spend less time staring at walls of text and more time finding what matters.
+
+---
+
+## The Mindset
+
+Linux tools follow the Unix philosophy: each command does one thing well, and you chain them together with pipes. The real power isn't in any single command — it's in **combining them**.
+
+A typical pentest workflow looks like this:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/passwd | grep -v "nologin\|false" | cut -d: -f1,3,7 | sort
+```
+
+Each tool in that chain does one job. Together they take a 40-line file and give you exactly what you need in one line.
+
+---
+
+## File Descriptors & Redirection
+
+Before filtering, understand how data flows in Linux. Every process has three standard streams:
+
+| FD  | Name     | Description              |
+| --- | -------- | ------------------------ |
+| `0` | `STDIN`  | Input fed into a program |
+| `1` | `STDOUT` | Normal output            |
+| `2` | `STDERR` | Error output             |
+
+Think of file descriptors like a ticket system — the OS uses the number to know which stream to interact with.
+
+### Redirect Output
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Redirect STDOUT to a file (overwrites)
+find /etc/ -name shadow > results.txt
+
+# Append STDOUT to an existing file
+find /etc/ -name passwd >> results.txt
+
+# Redirect STDERR to /dev/null (silence errors)
+find / -name "*.conf" 2>/dev/null
+
+# Redirect STDOUT and STDERR to separate files
+find /etc/ -name shadow 2>errors.txt 1>results.txt
+
+# Redirect a file into a command as STDIN
+cat < results.txt
+```
+
+### Pipes
+
+Pipes (`|`) take the STDOUT of one command and feed it as STDIN to the next. This is how you build processing chains.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find systemd config files, suppress errors, count results
+find /etc/ -name "*.conf" 2>/dev/null | grep systemd | wc -l
+```
+
+<Tip>
+  `2>/dev/null` is your best friend. Add it to the end of almost every `find` or enumeration command to keep your output clean.
+</Tip>
+
+---
+
+## Reading Files
+
+### `cat` — Print File Contents
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/passwd
+```
+
+### `head` / `tail` — First or Last Lines
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# First 10 lines (default)
+head /etc/passwd
+
+# Last 10 lines (default)
+tail /etc/passwd
+
+# Specify number of lines
+head -20 /var/log/auth.log
+tail -50 /var/log/syslog
+
+# Follow a log file in real time (useful for watching auth attempts)
+tail -f /var/log/auth.log
+```
+
+### `more` / `less` — Paged Reading
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Page through a file (press Q to quit)
+less /etc/passwd
+
+# less is better than more — it lets you scroll backward
+# and doesn't leave output in the terminal after you quit
+```
+
+---
+
+## Filtering & Searching
+
+### `grep` — Pattern Matching
+
+The most-used filtering tool. Searches for lines matching a pattern.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find users with bash shell
+cat /etc/passwd | grep "/bin/bash"
+
+# Exclude lines matching a pattern (-v = invert)
+cat /etc/passwd | grep -v "nologin\|false"
+
+# Case-insensitive search
+grep -i "password" config.php
+
+# Recursive search through a directory
+grep -r "password" /var/www/ 2>/dev/null
+
+# Show line numbers
+grep -n "root" /etc/passwd
+
+# Show only the matching part (not the whole line)
+grep -o "password=[^ ]*" config.txt
+
+# Extended regex (use | for OR, + for one-or-more)
+grep -E "(password|passwd|secret|key)" config.php
+```
+
+**Pentest one-liners with grep:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Hunt for credentials in web configs
+grep -r "password" /var/www/ 2>/dev/null
+grep -r "DB_PASS\|db_password\|mysqli" /var/www/ 2>/dev/null
+
+# Find cleartext passwords in logs
+grep -i "password" /var/log/auth.log 2>/dev/null
+
+# Search bash history for sensitive commands
+grep -i "password\|sudo\|ssh\|curl\|wget" ~/.bash_history
+```
+
+---
+
+## Transforming Output
+
+### `cut` — Extract Specific Fields
+
+Splits lines by a delimiter and picks the columns you want.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Extract just usernames from /etc/passwd (field 1, delimiter :)
+cat /etc/passwd | grep -v "nologin\|false" | cut -d":" -f1
+
+# root
+# sync
+# cry0l1t3
+# htb-student
+
+# Extract username AND shell (fields 1 and 7)
+cut -d":" -f1,7 /etc/passwd
+```
+
+### `tr` — Translate / Replace Characters
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Replace colons with spaces
+cat /etc/passwd | tr ":" " "
+
+# Convert lowercase to uppercase
+echo "hello world" | tr "[:lower:]" "[:upper:]"
+
+# Delete characters
+echo "hello 123" | tr -d "[:digit:]"
+```
+
+### `column` — Align Output Into a Table
+
+Makes messy output readable. Great after using `tr` to replace delimiters.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/passwd | grep -v "nologin\|false" | tr ":" " " | column -t
+
+# root         x  0     0      root               /root                /bin/bash
+# cry0l1t3     x  1001  1001   /home/cry0l1t3      /bin/bash
+# htb-student  x  1002  1002   /home/htb-student   /bin/bash
+```
+
+### `sort` — Sort Output
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Alphabetical sort
+cat /etc/passwd | sort
+
+# Reverse sort
+cat /etc/passwd | sort -r
+
+# Numeric sort (useful for ports, UIDs)
+cat /etc/passwd | sort -t: -k3 -n
+```
+
+### `wc` — Count Lines, Words, Characters
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Count lines
+cat /etc/passwd | wc -l
+
+# Count matching results from find
+find / -perm -4000 2>/dev/null | wc -l
+```
+
+---
+
+## Power Tools
+
+### `awk` — Field-Based Processing
+
+More powerful than `cut` — can print specific fields, do math, and filter simultaneously.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Print first and last field of each line
+cat /etc/passwd | grep -v "nologin\|false" | tr ":" " " | awk '{print $1, $NF}'
+
+# root /bin/bash
+# cry0l1t3 /bin/bash
+# htb-student /bin/bash
+
+# Print lines where field 3 (UID) equals 0 (root-level accounts)
+awk -F: '$3 == 0 {print $1}' /etc/passwd
+```
+
+### `sed` — Stream Editor (Find & Replace)
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Replace all occurrences of "bin" with "HTB"
+cat /etc/passwd | sed 's/bin/HTB/g'
+
+# Delete lines matching a pattern
+sed '/nologin/d' /etc/passwd
+
+# Print only lines matching a pattern
+sed -n '/bash/p' /etc/passwd
+```
+
+---
+
+## Regular Expressions (RegEx)
+
+RegEx lets you define flexible search patterns instead of literal strings.
+
+### Key Operators
+
+| Operator | Description                  | Example                             |
+| -------- | ---------------------------- | ----------------------------------- |
+| `.`      | Any single character         | `p.ss` matches `pass`, `p4ss`       |
+| `*`      | Zero or more of the previous | `ba*` matches `b`, `ba`, `baa`      |
+| `+`      | One or more of the previous  | `ba+` matches `ba`, `baa`           |
+| `?`      | Zero or one of the previous  | `colou?r` matches `color`, `colour` |
+| `^`      | Start of line                | `^root` — lines starting with root  |
+| `$`      | End of line                  | `bash$` — lines ending with bash    |
+| `[abc]`  | Any character in the set     | `[aeiou]` — any vowel               |
+| `[a-z]`  | Character range              | `[0-9]` — any digit                 |
+| `(a\|b)` | OR — match a or b            | `(bash\|sh)`                        |
+| `{2,4}`  | Repeat 2 to 4 times          | `[0-9]{1,3}`                        |
+
+### Examples with `grep -E`
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Lines containing "my" OR "false"
+grep -E "(my|false)" /etc/passwd
+
+# Lines containing BOTH "my" AND "false" (AND pattern)
+grep -E "(my.*false)" /etc/passwd
+
+# Find IP addresses in a log file
+grep -E "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" /var/log/auth.log
+
+# Lines that do NOT start with #
+grep -v "^#" /etc/ssh/sshd_config
+
+# Lines ending with "yes"
+grep -E "yes$" /etc/ssh/sshd_config
+```
+
+---
+
+## Chaining It All Together
+
+This is where the real power is. A few practical pentest chains:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List all users with their UID and shell, formatted as a table
+cat /etc/passwd | grep -v "nologin\|false" | tr ":" " " | awk '{print $1, $3, $NF}' | column -t
+
+# Find all SUID binaries and display them cleanly
+find / -perm -4000 -type f 2>/dev/null | sort
+
+# Search for password strings in all config files under /etc
+grep -rE "password|passwd|secret" /etc/ 2>/dev/null | grep -v "^Binary"
+
+# Extract all unique IP addresses from auth log
+grep -oE "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" /var/log/auth.log | sort -u
+
+# Enumerate open ports from netstat output, clean and sorted
+netstat -tuln 2>/dev/null | grep LISTEN | awk '{print $4}' | cut -d: -f2 | sort -n
+```
+
+---
+
+## Quick Reference
+
+| Tool            | Primary Use                  | Key Flag                                         |
+| --------------- | ---------------------------- | ------------------------------------------------ |
+| `grep`          | Filter lines by pattern      | `-v` invert, `-r` recursive, `-E` extended regex |
+| `cut`           | Extract fields by delimiter  | `-d` delimiter, `-f` field number                |
+| `tr`            | Replace or delete characters | `-d` delete                                      |
+| `awk`           | Field processing and logic   | `'{print $1, $NF}'`                              |
+| `sed`           | Find and replace in streams  | `'s/old/new/g'`                                  |
+| `sort`          | Sort output                  | `-n` numeric, `-r` reverse, `-u` unique          |
+| `wc`            | Count results                | `-l` lines                                       |
+| `column`        | Format output as table       | `-t`                                             |
+| `head` / `tail` | First or last N lines        | `-n` number, `-f` follow                         |
+| `less`          | Page through output          | `q` quit, `/` search                             |
+
+---
+
+_Next: [Permission Analysis](/tech/linux/permissions) — reading permission strings, finding SUID misconfigs, and understanding what sticky bits mean for exploitation._

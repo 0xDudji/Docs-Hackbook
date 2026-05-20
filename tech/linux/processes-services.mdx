@@ -1,0 +1,370 @@
+# Process & Service Management
+
+> Running processes and services are a live snapshot of what the system is doing. They reveal attack surface, credential exposure, and scheduled tasks that defenders often forget to lock down.
+
+---
+
+## The Mindset
+
+Processes and services matter to a pentester for three reasons:
+
+- **Attack surface** — Services running as root with known vulnerabilities
+- **Credential exposure** — Processes started with passwords as arguments (visible in `ps`)
+- **Scheduled execution** — Cron jobs and timers running privileged scripts you might be able to modify
+
+Always ask: _what is running, as whom, and can I influence it?_
+
+---
+
+## Processes
+
+### `ps` — Process Status
+
+The primary tool for viewing running processes.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All processes, full detail, including those without a terminal
+ps aux
+
+# Tree view — shows parent/child relationships
+ps auxf
+
+# Processes for a specific user
+ps -u root
+
+# Watch processes update every second (poor man's top)
+watch -n 1 "ps aux"
+```
+
+**`ps aux` output explained:**
+
+```
+USER    PID  %CPU %MEM    VSZ   RSS  STAT  START   TIME  COMMAND
+root      1   0.0  0.1  225948  9520  Ss   09:01   0:03  /sbin/init
+www-data 812  0.1  0.4  123456 18432  S    09:05   0:12  /usr/sbin/apache2
+```
+
+| Column          | Meaning                                                    |
+| --------------- | ---------------------------------------------------------- |
+| `USER`          | Who owns the process — root-owned processes are high value |
+| `PID`           | Process ID                                                 |
+| `%CPU` / `%MEM` | Resource usage                                             |
+| `STAT`          | Process state (S=sleeping, R=running, Z=zombie)            |
+| `COMMAND`       | The full command — **passwords often appear here**         |
+
+**Hunt for credentials in process arguments:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Look for passwords passed as arguments
+ps aux | grep -E "password|passwd|--pass|-p [0-9]"
+
+# Check full command lines via /proc
+for pid in /proc/[0-9]*/cmdline; do
+    cat "$pid" 2>/dev/null | tr '\0' ' '
+    echo
+done | grep -i "pass\|secret\|key\|token"
+```
+
+<Tip>
+  Developers and sysadmins frequently pass database passwords as command-line
+  arguments. These show up in `ps aux` and are readable by any user on the
+  system.
+</Tip>
+
+---
+
+## Services (Daemons)
+
+Services are background processes — identified by a `d` suffix in their name (`sshd`, `httpd`, `mysqld`). They're managed by **systemd** on most modern Linux systems.
+
+### `systemctl` — Service Management
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List all running services
+systemctl list-units --type=service --state=running
+
+# List ALL services (including stopped)
+systemctl list-units --type=service
+
+# Status of a specific service
+systemctl status ssh
+systemctl status apache2
+
+# Start / stop / restart
+systemctl start ssh
+systemctl stop ssh
+systemctl restart ssh
+
+# Enable at boot / disable
+systemctl enable ssh
+systemctl disable ssh
+```
+
+**What to look for in service status:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+systemctl status mysql
+
+# ● mysql.service - MySQL Community Server
+#    Loaded: loaded (/lib/systemd/system/mysql.service)
+#    Active: active (running) since Mon 2024-01-01
+#   Process: 1234 ExecStart=/usr/sbin/mysqld (code=exited)
+#  Main PID: 1235 (mysqld)
+#    CGroup: /system.slice/mysql.service
+#            └─1235 /usr/sbin/mysqld
+```
+
+Note the user context — if it says `User=root` in the unit file, any exploit against this service runs as root.
+
+### Check Service Unit Files for Misconfigs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# View the unit file for a service
+systemctl cat ssh
+cat /lib/systemd/system/apache2.service
+
+# Look for services running as root
+grep -r "User=" /etc/systemd/system/ /lib/systemd/system/ 2>/dev/null
+
+# Find writable service unit files (can hijack execution)
+find /etc/systemd /lib/systemd -writable -type f 2>/dev/null
+```
+
+### `journalctl` — Service Logs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Logs for a specific service
+journalctl -u ssh.service
+
+# Follow logs in real time
+journalctl -u apache2 -f
+
+# Logs since last boot
+journalctl -b
+
+# Look for errors
+journalctl -p err
+```
+
+---
+
+## Listening Ports & Network Services
+
+A service is only useful to you if it's accessible. Map what's listening and where.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All listening ports (TCP + UDP)
+ss -tuln
+
+# Same with process names (needs root for all processes)
+ss -tulnp
+
+# Legacy netstat equivalent
+netstat -tuln
+netstat -tulnp
+
+# Cross-reference with ps — find the process behind a port
+ss -tulnp | grep :3306     # MySQL
+ss -tulnp | grep :8080     # Web app
+```
+
+**Why this matters:** Services listening on `127.0.0.1` (localhost only) are not exposed externally — but once you're on the box, you can access them. Internal services are often less hardened than externally-facing ones.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find internal-only services (localhost listeners)
+ss -tuln | grep "127.0.0.1"
+
+# Port forward to access them from your machine
+ssh -L 8080:127.0.0.1:8080 user@target
+```
+
+---
+
+## Cron Jobs — Scheduled Task Abuse
+
+Cron runs scripts on a schedule — often as root. If a root-owned cron job calls a script you can modify, you can inject commands that run as root.
+
+### Where Cron Jobs Live
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# System-wide crontab
+cat /etc/crontab
+
+# Cron directories (scripts dropped here run automatically)
+ls -la /etc/cron.d/
+ls -la /etc/cron.daily/
+ls -la /etc/cron.hourly/
+ls -la /etc/cron.weekly/
+ls -la /etc/cron.monthly/
+
+# Current user's crontab
+crontab -l
+
+# Other users' crontabs (needs root)
+crontab -l -u root
+ls /var/spool/cron/crontabs/
+```
+
+### Reading a Crontab
+
+```
+# MIN  HOUR  DOM  MON  DOW   USER    COMMAND
+  0    */6    *    *    *    root    /opt/scripts/backup.sh
+  0     0     1    *    *    root    /usr/local/bin/cleanup.sh
+```
+
+| Field | Values | Description                    |
+| ----- | ------ | ------------------------------ |
+| MIN   | 0-59   | Minute                         |
+| HOUR  | 0-23   | Hour                           |
+| DOM   | 1-31   | Day of month                   |
+| MON   | 1-12   | Month                          |
+| DOW   | 0-7    | Day of week (0 and 7 = Sunday) |
+| `*`   | any    | Run every interval             |
+| `*/6` | any    | Every 6 units                  |
+
+### Exploiting Cron Jobs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Step 1: Find cron jobs running as root
+cat /etc/crontab
+grep -r "CRON" /var/log/syslog | tail -20     # See what recently ran
+
+# Step 2: Check if the script is writable
+ls -la /opt/scripts/backup.sh
+
+# Step 3: If writable — inject a reverse shell or SUID bash
+echo "chmod +s /bin/bash" >> /opt/scripts/backup.sh
+# Wait for cron to run, then:
+bash -p
+
+# Step 4: If the script doesn't exist yet — create it
+# (cron calls a script that was deleted but the job remains)
+echo '#!/bin/bash\nchmod +s /bin/bash' > /opt/scripts/backup.sh
+chmod +x /opt/scripts/backup.sh
+```
+
+<Tip>
+  Use `pspy` to monitor processes in real time without root — it catches cron
+  jobs and other scheduled tasks as they execute, even ones not visible in
+  crontab files. `./pspy64` — watch for root-owned processes spawning at regular
+  intervals.
+</Tip>
+
+---
+
+## Systemd Timers — The Modern Cron
+
+Systemd timers are the modern replacement for cron. Check them too.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List all active timers
+systemctl list-timers --all
+
+# View what a timer runs
+systemctl cat mytimer.timer
+systemctl cat mytimer.service
+```
+
+---
+
+## Process Signals
+
+Useful for controlling processes during a pentest — particularly for backgrounding tools or cleanly stopping them.
+
+| Signal    | Number | Shortcut | Description             |
+| --------- | ------ | -------- | ----------------------- |
+| `SIGHUP`  | 1      | —        | Reload config / restart |
+| `SIGINT`  | 2      | `Ctrl+C` | Interrupt process       |
+| `SIGQUIT` | 3      | `Ctrl+D` | Quit                    |
+| `SIGKILL` | 9      | —        | Force kill — no cleanup |
+| `SIGTERM` | 15     | —        | Graceful termination    |
+| `SIGSTOP` | 19     | —        | Pause process           |
+| `SIGTSTP` | 20     | `Ctrl+Z` | Suspend to background   |
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Kill a process by PID
+kill -9 <PID>
+
+# Kill by name
+pkill -9 apache2
+
+# Find PID by name
+pgrep sshd
+```
+
+### Background & Foreground
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Run a command in the background
+./scan.sh &
+
+# Suspend current process
+Ctrl+Z
+
+# List background jobs
+jobs
+
+# Resume in background
+bg
+
+# Bring back to foreground
+fg 1
+```
+
+---
+
+## Process & Service Enumeration Checklist
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# 1. All running processes — who owns them?
+ps aux
+
+# 2. Any credentials in process arguments?
+ps aux | grep -E "pass|secret|key|token"
+
+# 3. All running services
+systemctl list-units --type=service --state=running
+
+# 4. What ports are listening internally?
+ss -tuln | grep "127.0.0.1"
+
+# 5. System crontab
+cat /etc/crontab
+
+# 6. All cron directories
+ls -la /etc/cron.*
+
+# 7. Current user's crontab
+crontab -l
+
+# 8. Systemd timers
+systemctl list-timers --all
+
+# 9. Writable scripts called by cron
+cat /etc/crontab | awk '{print $NF}' | xargs ls -la 2>/dev/null
+
+# 10. Real-time process monitoring (no root needed)
+./pspy64
+```
+
+---
+
+## Quick Reference
+
+| Command                               | Purpose                            |
+| ------------------------------------- | ---------------------------------- |
+| `ps aux`                              | All running processes              |
+| `ps auxf`                             | Process tree                       |
+| `systemctl list-units --type=service` | All services                       |
+| `systemctl status <service>`          | Service status and logs            |
+| `journalctl -u <service>`             | Full service logs                  |
+| `ss -tulnp`                           | Listening ports with process names |
+| `cat /etc/crontab`                    | Scheduled tasks                    |
+| `crontab -l`                          | Current user's cron jobs           |
+| `systemctl list-timers`               | Systemd timers                     |
+| `kill -9 <PID>`                       | Force kill a process               |
+
+---
+
+_Next: [Network Configuration & Enumeration](/tech/linux/network-configuration) — mapping the internal network, active connections, and pivoting opportunities._

@@ -151,10 +151,18 @@
             "group": "Linux",
             "root": "tech/linux/index",
             "pages": [
-              "tech/linux/system-fundamentals",
+              "tech/linux/system-enumeration",
+              "tech/linux/user-management",
               "tech/linux/authentication-authorization",
-              "tech/linux/system-services",
+              "tech/linux/permissions",
+              "tech/linux/processes-services",
+              "tech/linux/network-configuration",
+              "tech/linux/filesystem-navigation",
               "tech/linux/storage-devices",
+              "tech/linux/system-logs",
+              "tech/linux/filtering-text-processing",
+              "tech/linux/security-hardening",
+              "tech/linux/pillaging",
               "tech/linux/bash-scripting"
             ]
           }

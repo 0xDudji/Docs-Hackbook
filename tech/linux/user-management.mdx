@@ -1,0 +1,332 @@
+# User & Group Management
+
+> Users and groups define who can do what on a Linux system. From a pentester's perspective, they're a map of targets — accounts to pivot through, credentials to crack, and misconfigurations to exploit.
+
+---
+
+## The Mindset
+
+Once you're on a box, user enumeration answers critical questions:
+
+- **Who else is here?** — Other user accounts are lateral movement targets
+- **What privileges do I have?** — Sudo rights, special groups, weak configs
+- **Where are the credentials?** — `/etc/shadow`, history files, config files
+- **Who can I become?** — `su`, `sudo`, token impersonation
+
+---
+
+## The Key Files
+
+### `/etc/passwd` — User Account Database
+
+Readable by everyone. Contains all user accounts on the system.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/passwd
+```
+
+Each line follows this format:
+
+```
+cry0l1t3 : x  : 1000 : 1000 :           : /home/cry0l1t3 : /bin/bash
+    │      │     │      │       │               │                │
+Username  Pwd   UID    GID   Comment       Home directory      Shell
+```
+
+| Field    | Description                   | Pentest Relevance                        |
+| -------- | ----------------------------- | ---------------------------------------- |
+| Username | Account name                  | Lateral movement target                  |
+| Password | `x` = stored in `/etc/shadow` | If not `x` → hash is right here          |
+| UID      | User ID — `0` = root          | Any UID 0 account = root                 |
+| GID      | Primary group ID              | Group membership                         |
+| Comment  | Full name or description      | Recon info                               |
+| Home dir | User's home directory         | Where to hunt for files                  |
+| Shell    | Login shell                   | `nologin`/`false` = no interactive login |
+
+**Useful one-liners against `/etc/passwd`:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All users with an interactive shell (real accounts)
+cat /etc/passwd | grep -v "nologin\|false" | cut -d: -f1
+
+# Any account with UID 0 (root-level) besides root itself
+awk -F: '$3 == 0 {print $1}' /etc/passwd
+
+# All home directories
+cat /etc/passwd | cut -d: -f1,6 | grep -v "nologin\|false"
+
+# Clean formatted table of users, UIDs, and shells
+cat /etc/passwd | grep -v "nologin\|false" | tr ":" " " | awk '{print $1, $3, $NF}' | column -t
+```
+
+---
+
+### `/etc/shadow` — Password Hashes
+
+Only readable by root. Contains the actual password hashes for all accounts. Getting here is a major milestone.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Requires root or sudo
+sudo cat /etc/shadow
+```
+
+Each line format:
+
+```
+cry0l1t3:$6$wBRzy$...HASH...:18395:0:99999:7:::
+    │          │                │    │   │
+Username    Hash (+ algo)    Last   Min  Max
+                             change  age  age
+```
+
+**Hash algorithm prefixes:**
+
+| Prefix          | Algorithm                             |
+| --------------- | ------------------------------------- |
+| `$1$`           | MD5 (weak)                            |
+| `$2a$` / `$2b$` | bcrypt                                |
+| `$5$`           | SHA-256                               |
+| `$6$`           | SHA-512 (most common on modern Linux) |
+| `!` or `*`      | Account locked — no password login    |
+
+**Once you have hashes, crack them:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Unshadow (combine passwd + shadow for John)
+unshadow /etc/passwd /etc/shadow > hashes.txt
+
+# Crack with John the Ripper
+john --wordlist=/usr/share/wordlists/rockyou.txt hashes.txt
+
+# Crack with Hashcat (SHA-512 = mode 1800)
+hashcat -m 1800 hashes.txt /usr/share/wordlists/rockyou.txt
+```
+
+---
+
+### `/etc/group` — Group Definitions
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/group
+
+# Format: group_name:password:GID:members
+# sudo:x:27:cry0l1t3,htb-student
+```
+
+**High-value groups to look for:**
+
+| Group            | Why It Matters                       |
+| ---------------- | ------------------------------------ |
+| `sudo` / `wheel` | Can run commands as root             |
+| `adm`            | Can read logs in `/var/log`          |
+| `shadow`         | Can read `/etc/shadow`               |
+| `docker`         | Mount host filesystem → instant root |
+| `lxd` / `lxc`    | Container escape → root              |
+| `disk`           | Raw disk access → read any file      |
+| `video`          | Can capture screen framebuffer       |
+| `staff`          | Can write to `/usr/local`            |
+
+---
+
+## Current User Enumeration
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Who am I?
+whoami
+
+# Full identity — UID, GID, all groups
+id
+
+# My sudo rights — check EVERY entry against GTFOBins
+sudo -l
+
+# My environment — look for tokens, keys, writable PATH entries
+env
+
+# My command history — users type passwords here all the time
+cat ~/.bash_history
+cat ~/.zsh_history 2>/dev/null
+
+# My SSH keys
+ls -la ~/.ssh/
+cat ~/.ssh/id_rsa 2>/dev/null
+cat ~/.ssh/authorized_keys 2>/dev/null
+```
+
+---
+
+## All Users on the System
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Interactive users (real login accounts)
+cat /etc/passwd | grep -v "nologin\|false\|sync"
+
+# All home directories (even if the user account is deleted)
+ls -la /home/
+
+# Who is currently logged in
+who
+w
+
+# Login history
+last
+lastlog | grep -v "Never"
+```
+
+---
+
+## Switching Users
+
+### `su` — Switch User
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Switch to another user (need their password)
+su cry0l1t3
+
+# Switch to root
+su -
+
+# Run a single command as another user
+su -c "whoami" cry0l1t3
+```
+
+### `sudo` — Execute as Another User
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Run a command as root
+sudo <command>
+
+# Run as a specific user
+sudo -u www-data /bin/bash
+
+# List what you can run
+sudo -l
+
+# Shell as root (if permitted)
+sudo /bin/bash
+sudo su -
+```
+
+**Reading `sudo -l` output:**
+
+```
+User cry0l1t3 may run the following commands on box:
+    (root) NOPASSWD: /usr/bin/vim
+#    │        │              │
+#  Runas   No password   Allowed binary
+#  user     needed
+```
+
+Any `NOPASSWD` entry is an immediate privesc vector. Check GTFOBins for the binary listed.
+
+<Tip>
+  `(ALL : ALL) ALL` means the user can run any command as any user — they
+  effectively have root. `(ALL) NOPASSWD: ALL` is the same but without needing a
+  password.
+</Tip>
+
+---
+
+## User Management Commands
+
+These are useful to know both for administration and for understanding what happened on a compromised box:
+
+| Command                   | Description              |
+| ------------------------- | ------------------------ |
+| `useradd <user>`          | Create a new user        |
+| `userdel <user>`          | Delete a user            |
+| `usermod -aG sudo <user>` | Add user to a group      |
+| `passwd <user>`           | Change a user's password |
+| `addgroup <group>`        | Create a new group       |
+| `delgroup <group>`        | Delete a group           |
+
+**Adding yourself to a privileged group (if you have write access to `/etc/group`):**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check if /etc/group is writable (rare but happens)
+ls -la /etc/group
+
+# If writable — add yourself to sudo group
+usermod -aG sudo $(whoami)
+
+# Or edit directly
+sed -i 's/^sudo:.*/&,cry0l1t3/' /etc/group
+```
+
+---
+
+## Hunting Credentials Across the System
+
+With user enumeration complete, pivot to credential hunting:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# History files for all users (need root for other users' home dirs)
+find /home -name ".*history" 2>/dev/null -exec cat {} \;
+cat /root/.bash_history 2>/dev/null
+
+# SSH private keys across the system
+find / -name "id_rsa" -o -name "id_ecdsa" -o -name "id_ed25519" 2>/dev/null
+
+# Check for password reuse — try cracked passwords on all accounts
+su - <other_user>   # try with cracked password
+
+# Readable shadow file?
+cat /etc/shadow 2>/dev/null
+
+# Any .pgpass, .my.cnf, .netrc files (stored credentials)
+find /home /root -name ".pgpass" -o -name ".my.cnf" -o -name ".netrc" 2>/dev/null | xargs cat
+```
+
+---
+
+## User Enumeration Checklist
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# 1. Who am I and what groups do I belong to?
+whoami && id
+
+# 2. What can I run as sudo?
+sudo -l
+
+# 3. All interactive user accounts
+cat /etc/passwd | grep -v "nologin\|false"
+
+# 4. Any UID 0 accounts besides root?
+awk -F: '$3 == 0' /etc/passwd
+
+# 5. Can I read the shadow file?
+cat /etc/shadow 2>/dev/null
+
+# 6. Home directories and their contents
+ls -la /home/
+find /home -type f 2>/dev/null
+
+# 7. History files
+find /home /root -name ".*history" 2>/dev/null
+
+# 8. SSH keys
+find / -name "id_rsa" 2>/dev/null
+
+# 9. Who is currently logged in?
+w && last
+```
+
+---
+
+## Quick Reference
+
+| Command                  | Purpose                      |
+| ------------------------ | ---------------------------- |
+| `cat /etc/passwd`        | All user accounts            |
+| `cat /etc/shadow`        | Password hashes (needs root) |
+| `cat /etc/group`         | Group memberships            |
+| `id`                     | Current user's full identity |
+| `sudo -l`                | Sudo rights for current user |
+| `who` / `w`              | Currently logged-in users    |
+| `last`                   | Login history                |
+| `su <user>`              | Switch to another user       |
+| `unshadow passwd shadow` | Prepare hashes for cracking  |
+
+---
+
+_Next: [Process & Service Management](/tech/linux/processes-services) — enumerating running processes, services, and cron jobs to find attack surface._

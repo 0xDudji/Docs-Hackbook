@@ -1,0 +1,411 @@
+# Linux Security & Hardening
+
+> Understanding defenses makes you a better attacker. Knowing what SELinux, AppArmor, and TCP Wrappers do — and how they're configured — tells you exactly what you're up against and where the gaps are.
+
+---
+
+## The Mindset
+
+Security hardening is what defenders put in place to stop you. As a pentester you need to:
+
+- **Identify what's running** — SELinux? AppArmor? Fail2ban? Each changes your approach
+- **Understand the restrictions** — What can't you do, and why?
+- **Find the gaps** — Hardening is only as strong as its configuration. Misconfigured defenses are often worse than none at all
+
+This knowledge also helps you write better pentest reports — you can tell defenders exactly what's missing.
+
+---
+
+## System Updates & Patch Level
+
+The most basic security control — and the most commonly neglected. An unpatched kernel or service is often a direct path to root.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check OS and kernel version
+uname -r
+cat /etc/os-release
+
+# List installed packages and versions
+dpkg -l                            # Debian/Ubuntu
+rpm -qa                            # RHEL/CentOS
+
+# Check for available updates (shows what's unpatched)
+apt list --upgradable 2>/dev/null
+yum check-update 2>/dev/null
+
+# Last time the system was updated
+ls -la /var/cache/apt/pkgcache.bin
+stat /var/lib/apt/lists/ | grep "Modify"
+
+# Update everything (on your own lab systems)
+sudo apt update && sudo apt dist-upgrade
+```
+
+<Tip>
+  Always run `uname -r` early and search for kernel exploits. Administrators
+  frequently patch applications but forget to update the kernel manually on
+  older systems.
+</Tip>
+
+---
+
+## SELinux — Security-Enhanced Linux
+
+SELinux is a **Mandatory Access Control (MAC)** system built into the Linux kernel. It enforces security policies that define exactly what every process can and cannot do — regardless of file permissions.
+
+### How It Works
+
+Every process, file, and system object gets a **security label**. Policy rules define which labels can interact with which. Even root is constrained by SELinux policy.
+
+### Check SELinux Status
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check if SELinux is running and in what mode
+sestatus
+
+# Output:
+# SELinux status:                 enabled
+# SELinuxfs mount:                /sys/fs/selinux
+# SELinux mount point:            /sys/fs/selinux
+# Loaded policy name:             targeted
+# Current mode:                   enforcing     ← enforcing | permissive | disabled
+# Mode from config file:          enforcing
+# Policy MLS status:              enabled
+# Policy deny_unknown status:     denied
+# Max kernel policy version:      33
+
+# Quick mode check
+getenforce
+# Enforcing / Permissive / Disabled
+```
+
+### SELinux Modes
+
+| Mode         | Behavior                                              | Pentest Impact                                |
+| ------------ | ----------------------------------------------------- | --------------------------------------------- |
+| `Enforcing`  | Policies are enforced — violations blocked and logged | Full restrictions in place                    |
+| `Permissive` | Violations are logged but NOT blocked                 | No restrictions — but your actions are logged |
+| `Disabled`   | SELinux completely off                                | No restrictions, no logging                   |
+
+### SELinux Contexts
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# View SELinux context on files
+ls -Z /etc/passwd
+# system_u:object_r:passwd_file_t:s0 /etc/passwd
+
+# View context of running processes
+ps auxZ | grep apache
+# unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023 root 1234 apache2
+
+# View your own context
+id -Z
+```
+
+### Temporarily Disable SELinux (Requires Root)
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Set to permissive for current session (no reboot needed)
+setenforce 0
+
+# Re-enable
+setenforce 1
+
+# Permanently disable (requires reboot) — edit config
+cat /etc/selinux/config
+# SELINUX=enforcing  ← change to disabled or permissive
+```
+
+### Common SELinux Bypass Techniques
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check if you're running in an unconfined context (unrestricted)
+id -Z | grep "unconfined"
+
+# Look for booleans that weaken policy
+getsebool -a | grep "on$"               # All enabled booleans
+getsebool httpd_execmem                 # Specific boolean
+getsebool httpd_can_network_connect_db  # Often enabled for web apps
+
+# Find files with permissive types (less restricted)
+seinfo --permissive 2>/dev/null
+```
+
+---
+
+## AppArmor
+
+AppArmor is also a **MAC system** but operates differently from SELinux. It uses **application profiles** that define what files and capabilities each application can access. Simpler to configure than SELinux, and common on Ubuntu/Debian systems.
+
+### Check AppArmor Status
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check if AppArmor is running
+aa-status
+sudo apparmor_status
+
+# Output:
+# apparmor module is loaded.
+# 15 profiles are loaded.
+# 15 profiles are in enforce mode.   ← full restrictions
+# 0 profiles are in complain mode.   ← log only, no blocking
+# 3 processes have profiles defined.
+```
+
+### AppArmor Modes
+
+| Mode         | Behavior                              | Pentest Impact                      |
+| ------------ | ------------------------------------- | ----------------------------------- |
+| `enforce`    | Profile restrictions are applied      | Actions outside profile are blocked |
+| `complain`   | Violations are logged but not blocked | No restrictions — but logged        |
+| `unconfined` | No profile — no restrictions          | Full access for that process        |
+
+### Check Profiles for a Process
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List all loaded profiles
+cat /sys/kernel/security/apparmor/profiles 2>/dev/null
+
+# Check if a specific binary has a profile
+aa-status | grep apache
+aa-status | grep mysql
+
+# View profile contents
+cat /etc/apparmor.d/usr.sbin.apache2 2>/dev/null
+
+# Processes NOT covered by AppArmor (unconfined)
+aa-status | grep "unconfined"
+```
+
+### Disable AppArmor for a Profile (Requires Root)
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Set a profile to complain mode (no blocking)
+aa-complain /usr/sbin/apache2
+
+# Disable a specific profile
+aa-disable /usr/sbin/apache2
+
+# Reload all profiles
+apparmor_parser -r /etc/apparmor.d/*
+```
+
+---
+
+## TCP Wrappers
+
+TCP Wrappers control access to network services based on the **client's IP address**. Simple but effective for basic network-level access control.
+
+### How It Works
+
+Two files control access:
+
+| File               | Purpose                               |
+| ------------------ | ------------------------------------- |
+| `/etc/hosts.allow` | Explicitly permitted services and IPs |
+| `/etc/hosts.deny`  | Explicitly blocked services and IPs   |
+
+**Rule order:** `hosts.allow` is checked first. If a match is found, access is granted. If not, `hosts.deny` is checked. If no match in either, access is granted by default.
+
+### Reading the Config Files
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/hosts.allow
+
+# # Allow SSH from the local network
+# sshd : 10.129.14.0/24
+#
+# # Allow FTP from a specific host
+# ftpd : 10.129.14.10
+#
+# # Allow Telnet from any host in this domain
+# telnetd : .inlanefreight.local
+
+cat /etc/hosts.deny
+
+# # Deny all services from this domain
+# ALL : .inlanefreight.com
+#
+# # Deny SSH from a specific host
+# sshd : 10.129.22.22
+#
+# # Deny FTP from a subnet
+# ftpd : 10.129.22.0/24
+```
+
+### Format
+
+```
+<service> : <client>
+
+# Examples:
+ALL : ALL                    # All services from all clients
+sshd : 192.168.1.0/24       # SSH from a subnet
+httpd : .example.com         # HTTP from a domain (note the leading dot)
+ALL : LOCAL                  # All services from localhost
+```
+
+<Tip>
+  TCP Wrappers only control access to services — not to ports. It's not a
+  firewall replacement. A service not using TCP Wrappers (like most modern
+  daemons) is completely unaffected.
+</Tip>
+
+---
+
+## Firewall — iptables & nftables
+
+### iptables
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# View all rules
+sudo iptables -L -n -v
+
+# View NAT rules (port forwards, masquerading)
+sudo iptables -t nat -L -n -v
+
+# View specific chain
+sudo iptables -L INPUT -n -v
+sudo iptables -L OUTPUT -n -v
+
+# Check if iptables is active
+sudo iptables -L | grep -v "^Chain\|^target\|^$"
+```
+
+### nftables (Modern Replacement)
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# View all rules
+sudo nft list ruleset
+
+# View a specific table
+sudo nft list table inet filter
+```
+
+### UFW (Uncomplicated Firewall — Ubuntu)
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Status and rules
+sudo ufw status verbose
+
+# Check UFW logs
+cat /var/log/ufw.log | tail -30
+```
+
+---
+
+## Fail2ban
+
+Fail2ban monitors logs and bans IPs that show malicious behavior (too many failed logins, etc.).
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check if fail2ban is running
+systemctl status fail2ban
+
+# View active jails and ban counts
+sudo fail2ban-client status
+sudo fail2ban-client status sshd
+
+# Check banned IPs
+sudo fail2ban-client status sshd | grep "Banned IP"
+
+# View fail2ban config
+cat /etc/fail2ban/jail.conf
+cat /etc/fail2ban/jail.local 2>/dev/null
+
+# Ban threshold — how many failures before a ban
+grep "maxretry\|bantime\|findtime" /etc/fail2ban/jail.conf
+```
+
+**Pentest relevance:** If fail2ban is active on SSH, slow down your brute force attempts or use a distributed approach. The default ban threshold is typically 5 failures.
+
+---
+
+## Other Security Tools
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Lynis — system security audit tool (if installed)
+lynis audit system 2>/dev/null
+
+# chkrootkit — rootkit scanner (if installed)
+chkrootkit 2>/dev/null
+
+# rkhunter — rootkit hunter (if installed)
+rkhunter --check 2>/dev/null
+
+# Check for IDS/IPS tools running
+ps aux | grep -E "snort|suricata|ossec|aide|tripwire"
+```
+
+---
+
+## SSH Hardening (Know What You're Up Against)
+
+SSH config reveals what authentication methods are allowed and what restrictions are in place:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /etc/ssh/sshd_config | grep -v "^#\|^$"
+```
+
+**Key settings and their pentest implications:**
+
+| Setting                      | Secure Value   | Pentest Implication                   |
+| ---------------------------- | -------------- | ------------------------------------- |
+| `PermitRootLogin`            | `no`           | Can't SSH directly as root            |
+| `PasswordAuthentication`     | `no`           | Must have a valid key to authenticate |
+| `PubkeyAuthentication`       | `yes`          | Key-based auth is enabled             |
+| `AllowUsers` / `AllowGroups` | specific users | Only listed users can SSH in          |
+| `Port`                       | non-standard   | SSH running on a different port       |
+| `MaxAuthTries`               | `3`            | Limited attempts before disconnect    |
+| `X11Forwarding`              | `no`           | Can't forward GUI applications        |
+
+---
+
+## Hardening Checklist (Defender's View)
+
+Understanding what a hardened system looks like helps you identify what's _missing_ on your target:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Is the system up to date?
+apt list --upgradable 2>/dev/null | wc -l
+
+# Is SSH properly configured?
+grep "PermitRootLogin\|PasswordAuthentication" /etc/ssh/sshd_config
+
+# Is SELinux or AppArmor enabled?
+getenforce 2>/dev/null || aa-status 2>/dev/null | head -3
+
+# Is a firewall running?
+sudo iptables -L | head -5
+sudo ufw status 2>/dev/null
+
+# Is fail2ban running?
+systemctl is-active fail2ban 2>/dev/null
+
+# Any world-writable files? (should be minimal)
+find / -perm -o+w -type f 2>/dev/null | grep -v "^/proc\|^/sys\|^/tmp" | wc -l
+
+# Any unnecessary SUID binaries?
+find / -perm -4000 -type f 2>/dev/null
+
+# Are unnecessary services disabled?
+systemctl list-units --type=service --state=running | wc -l
+```
+
+---
+
+## Quick Reference
+
+| Tool         | Check Command              | What It Does                    |
+| ------------ | -------------------------- | ------------------------------- |
+| SELinux      | `sestatus` / `getenforce`  | MAC policy enforcement          |
+| AppArmor     | `aa-status`                | Profile-based MAC               |
+| TCP Wrappers | `cat /etc/hosts.allow`     | IP-based service access control |
+| iptables     | `iptables -L -n`           | Stateful packet filtering       |
+| UFW          | `ufw status verbose`       | iptables frontend               |
+| Fail2ban     | `fail2ban-client status`   | Brute force protection          |
+| SSH config   | `cat /etc/ssh/sshd_config` | Remote access restrictions      |
+
+---
+
+_Next: [Terminal Shortcuts](/tech/linux/shortcuts) — keyboard shortcuts that save time and keep you moving fast in the terminal._

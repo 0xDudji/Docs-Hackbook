@@ -1,0 +1,364 @@
+# System Logs
+
+> Logs are the system's memory. They record who logged in, what commands ran, which services failed, and what data moved. For a pentester, they're both a target to pillage and a threat to cover.
+
+---
+
+## The Mindset
+
+System logs matter to a pentester from two angles:
+
+- **Offensive** — Logs contain credentials, activity trails, internal hostnames, and evidence of what's running on the system
+- **Defensive awareness** — Understanding what gets logged tells you what traces you're leaving behind
+
+Every action you take on a compromised system is potentially being logged somewhere. Know what those sources are.
+
+---
+
+## Log Locations Overview
+
+| Log File                      | What It Records                                            |
+| ----------------------------- | ---------------------------------------------------------- |
+| `/var/log/auth.log`           | SSH logins, sudo usage, PAM authentication (Debian/Ubuntu) |
+| `/var/log/secure`             | Same as auth.log on RHEL/CentOS                            |
+| `/var/log/syslog`             | General system events, service starts/stops, cron          |
+| `/var/log/kern.log`           | Kernel messages, hardware events, driver issues            |
+| `/var/log/messages`           | General messages (RHEL/CentOS equivalent of syslog)        |
+| `/var/log/dpkg.log`           | Package installs and removals                              |
+| `/var/log/apache2/access.log` | HTTP requests to Apache                                    |
+| `/var/log/apache2/error.log`  | Apache errors — often reveals paths and configs            |
+| `/var/log/nginx/access.log`   | HTTP requests to Nginx                                     |
+| `/var/log/mysql/error.log`    | MySQL errors and startups                                  |
+| `/var/log/postgresql/`        | PostgreSQL activity                                        |
+| `/var/log/fail2ban.log`       | Blocked IPs, ban events                                    |
+| `/var/log/ufw.log`            | Firewall allow/deny events                                 |
+| `/var/log/mail.log`           | Mail server activity                                       |
+| `/var/log/journal/`           | Systemd journal (binary — read with `journalctl`)          |
+
+---
+
+## Reading Logs
+
+### Basic Log Reading
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Read a full log
+cat /var/log/syslog
+
+# Last 50 lines (most recent activity)
+tail -50 /var/log/auth.log
+
+# Follow in real time
+tail -f /var/log/auth.log
+
+# First 20 lines
+head -20 /var/log/syslog
+
+# Page through a large log
+less /var/log/syslog
+```
+
+### Filtering Log Output
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Search for a specific string
+grep "Failed password" /var/log/auth.log
+
+# Case-insensitive search
+grep -i "error" /var/log/syslog
+
+# Show lines around a match (context)
+grep -A 3 -B 3 "authentication failure" /var/log/auth.log
+
+# Filter by date
+grep "May 20" /var/log/auth.log
+
+# Count occurrences
+grep "Failed password" /var/log/auth.log | wc -l
+```
+
+---
+
+## Authentication Logs
+
+`/var/log/auth.log` (Debian/Ubuntu) or `/var/log/secure` (RHEL/CentOS) is the most valuable log for a pentester. It records every login attempt, sudo command, and session event.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /var/log/auth.log
+```
+
+**What to look for:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Successful SSH logins — who logged in and from where
+grep "Accepted" /var/log/auth.log
+# Feb 28 18:15:01 sshd[5678]: Accepted publickey for admin from 10.14.15.2 port 43210
+
+# Failed login attempts — brute force evidence, valid usernames
+grep "Failed password" /var/log/auth.log
+# Feb 28 15:04:22 sshd[3010]: Failed password for htb-student from 10.14.15.2 port 50223
+
+# Sudo commands run — what privileged actions were taken
+grep "sudo" /var/log/auth.log
+# Feb 28 18:15:03 sudo: admin : TTY=pts/1 ; PWD=/home/admin ; USER=root ; COMMAND=/bin/bash
+
+# New sessions created
+grep "session opened" /var/log/auth.log
+
+# su usage — user switching
+grep "session opened for user" /var/log/auth.log
+```
+
+**Pentest intel from auth.log:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All unique IPs that attempted to log in
+grep "Failed password\|Accepted" /var/log/auth.log | grep -oE "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" | sort -u
+
+# All usernames that were attempted (valid + invalid)
+grep "Failed password" /var/log/auth.log | awk '{print $9}' | sort | uniq -c | sort -rn
+
+# All commands run via sudo
+grep "COMMAND" /var/log/auth.log | awk -F"COMMAND=" '{print $2}' | sort -u
+```
+
+---
+
+## System Logs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /var/log/syslog | tail -100
+```
+
+**What to look for:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Cron job execution — what ran and when
+grep "CRON" /var/log/syslog
+# Feb 28 15:00:01 server CRON[2715]: (root) CMD (/usr/local/bin/backup.sh)
+
+# Service starts and stops
+grep "systemd\[1\]" /var/log/syslog | grep -E "Started|Stopped|Failed"
+
+# Network events
+grep "NetworkManager\|dhclient" /var/log/syslog
+
+# Errors and warnings
+grep -E "error|warning|failed" /var/log/syslog -i | tail -30
+```
+
+<Tip>
+  Cron entries in syslog show you exactly what scripts run as root and when —
+  cross-reference with the actual scripts to find hijack opportunities.
+</Tip>
+
+---
+
+## Kernel Logs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+cat /var/log/kern.log | tail -50
+
+# Also accessible via dmesg
+dmesg | tail -50
+dmesg | grep -i "error\|fail\|usb\|eth"
+```
+
+**What to look for:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Driver and hardware issues (may reveal kernel version weaknesses)
+grep -i "error\|fail" /var/log/kern.log
+
+# USB device connections (removable media activity)
+dmesg | grep -i "usb\|storage"
+
+# Network interface events
+dmesg | grep -i "eth\|wlan\|link"
+
+# Out-of-memory events (reveals memory pressure — useful for DoS research)
+grep "Out of memory\|oom" /var/log/kern.log
+```
+
+---
+
+## Application Logs
+
+### Web Server Logs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Apache access log — every HTTP request
+cat /var/log/apache2/access.log | tail -50
+
+# Apache error log — application errors, path disclosures
+cat /var/log/apache2/error.log | tail -50
+
+# Nginx
+cat /var/log/nginx/access.log | tail -50
+cat /var/log/nginx/error.log | tail -50
+```
+
+**Hunting credentials in web logs:**
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Credentials passed in GET parameters (bad practice but it happens)
+grep -E "password=|passwd=|pass=|token=|key=|secret=" /var/log/apache2/access.log
+
+# POST data isn't logged by default, but errors sometimes expose it
+grep -i "password\|credential" /var/log/apache2/error.log
+
+# User agents — identify tools used against this server
+awk '{print $12}' /var/log/apache2/access.log | sort | uniq -c | sort -rn | head -20
+
+# Most active IPs
+awk '{print $1}' /var/log/apache2/access.log | sort | uniq -c | sort -rn | head -20
+```
+
+### Database Logs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# MySQL errors (connection attempts, auth failures)
+cat /var/log/mysql/error.log
+
+# PostgreSQL logs
+ls /var/log/postgresql/
+cat /var/log/postgresql/postgresql-*-main.log | tail -50
+```
+
+---
+
+## Systemd Journal
+
+On modern systems, many logs go to the systemd journal instead of flat files.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All logs (most recent first)
+journalctl -r
+
+# Logs for a specific service
+journalctl -u ssh.service
+journalctl -u apache2.service
+journalctl -u cron.service
+
+# Logs since last boot
+journalctl -b
+
+# Logs from a specific time window
+journalctl --since "2024-01-01 00:00" --until "2024-01-01 23:59"
+
+# Follow in real time
+journalctl -f
+
+# Show only errors
+journalctl -p err
+
+# Without pager (pipe-friendly)
+journalctl -u ssh --no-pager | grep "Accepted"
+```
+
+---
+
+## Security Logs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Fail2ban — which IPs got banned and for what
+cat /var/log/fail2ban.log
+grep "Ban\|Unban" /var/log/fail2ban.log | tail -20
+
+# UFW firewall events
+cat /var/log/ufw.log | tail -50
+grep "BLOCK" /var/log/ufw.log | awk '{print $12}' | sort | uniq -c | sort -rn
+
+# AppArmor denials (processes hitting security boundaries)
+grep "DENIED\|apparmor" /var/log/syslog | tail -20
+
+# Audit daemon (if auditd is running)
+cat /var/log/audit/audit.log 2>/dev/null | tail -50
+ausearch -k passwd_changes 2>/dev/null    # Search audit log by key
+```
+
+---
+
+## Log Analysis for Pentesters
+
+### Reconstructing What Happened
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Timeline of all auth events for a specific user
+grep "htb-student" /var/log/auth.log | sort
+
+# What commands did admin run via sudo today?
+grep "sudo.*admin\|admin.*sudo" /var/log/auth.log | grep "COMMAND"
+
+# What connected to this machine in the last hour?
+grep "Accepted\|Failed" /var/log/auth.log | tail -100
+
+# What services restarted recently?
+grep "Started\|Stopped" /var/log/syslog | tail -30
+
+# Any privilege escalation attempts?
+grep "su\[" /var/log/auth.log
+grep "sudo" /var/log/auth.log | grep -v "session\|pam"
+```
+
+### Finding Cleartext Credentials in Logs
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Broad credential search across all readable logs
+grep -rE "password|passwd|secret|token|credential|api.key" /var/log/ 2>/dev/null | grep -v "^Binary"
+
+# FTP credentials (often logged in plaintext)
+grep -i "pass\|user" /var/log/vsftpd.log 2>/dev/null
+
+# SMTP AUTH credentials
+grep -i "AUTH\|LOGIN" /var/log/mail.log 2>/dev/null
+```
+
+---
+
+## Log Enumeration Checklist
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# 1. Auth events — who logged in, from where
+grep "Accepted\|Failed" /var/log/auth.log | tail -50
+
+# 2. Sudo commands run on the system
+grep "COMMAND" /var/log/auth.log | tail -30
+
+# 3. Cron job execution history
+grep "CRON" /var/log/syslog | tail -30
+
+# 4. Recent service failures
+journalctl -p err -b --no-pager | tail -30
+
+# 5. Web server credential exposure
+grep -E "password=|token=|key=" /var/log/apache2/access.log 2>/dev/null
+
+# 6. Fail2ban bans — shows attack history
+grep "Ban" /var/log/fail2ban.log 2>/dev/null | tail -20
+
+# 7. All logs with credential mentions
+grep -rl "password\|passwd\|secret" /var/log/ 2>/dev/null
+
+# 8. Kernel issues (potential CVE leads)
+dmesg | grep -i "error\|fail" | tail -20
+```
+
+---
+
+## Quick Reference
+
+| Command                             | Purpose                     |
+| ----------------------------------- | --------------------------- |
+| `tail -f /var/log/auth.log`         | Live authentication events  |
+| `grep "Accepted" /var/log/auth.log` | Successful SSH logins       |
+| `grep "COMMAND" /var/log/auth.log`  | Sudo command history        |
+| `grep "CRON" /var/log/syslog`       | Cron job execution          |
+| `journalctl -u <service>`           | Service-specific logs       |
+| `journalctl -p err -b`              | All errors since last boot  |
+| `dmesg \| tail -50`                 | Recent kernel messages      |
+| `grep -r "password" /var/log/`      | Credential hunt in all logs |
+
+---
+
+_Next: [Linux Security & Hardening](/tech/linux/security-hardening) — understanding SELinux, AppArmor, TCP Wrappers, and the defenses you'll encounter on hardened systems._
