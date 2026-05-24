@@ -1,17 +1,9 @@
-# Permission Analysis
-
-> Permissions are the gatekeepers of a Linux system. Misconfigured ones are a direct path to root. Learn to read them instantly and spot the misconfigs that defenders miss.
-
----
-
 ## The Mindset
 
-Every file and directory on Linux has a permission set that controls who can read it, write to it, or execute it. As a pentester, you're looking for two things:
+As a pentester, you're looking for two things:
 
 - **What can I access that I shouldn't?** — World-readable sensitive files, writable system scripts
 - **What can I run as someone else?** — SUID/SGID binaries, sudo rights, writable cron scripts
-
-Permissions are the most common source of privilege escalation paths on Linux. Administrators set them once and forget them. You find them and use them.
 
 ---
 
@@ -97,18 +89,6 @@ So `chmod 754` means:
 4 = r--  (others can only read)
 ```
 
-**Common permission patterns:**
-
-| Octal  | String      | Typical Use                        |
-| ------ | ----------- | ---------------------------------- |
-| `755`  | `rwxr-xr-x` | Executables, public directories    |
-| `644`  | `rw-r--r--` | Regular files, configs             |
-| `600`  | `rw-------` | SSH private keys, sensitive files  |
-| `777`  | `rwxrwxrwx` | World-writable — always suspicious |
-| `4755` | `rwsr-xr-x` | SUID binary                        |
-
----
-
 ## Changing Permissions
 
 ### `chmod` — Change File Mode
@@ -174,7 +154,7 @@ find / -perm /6000 -type f 2>/dev/null
 
 ### What To Do With Them
 
-Take every result and check it against **GTFOBins** (https://gtfobins.github.io/) — a curated list of Unix binaries that can be abused for privilege escalation.
+Take every result and check it against **GTFOBins** (https://gtfobins.github.io/).
 
 Common SUID abuses:
 
@@ -219,10 +199,6 @@ drwxrwxrwt 10 root root 4096 May 20 12:00 /tmp
 | `t` (lowercase) | Sticky bit set, execute permission also set |
 | `T` (uppercase) | Sticky bit set, execute permission NOT set  |
 
-**Pentest relevance:** `/tmp` always has the sticky bit. You can write files there but can't delete files owned by others. Use it to drop payloads and scripts.
-
----
-
 ## World-Writable Files & Directories
 
 World-writable means **any user** can write to it. In a privesc context, this means you can modify a file that a privileged process may later read or execute.
@@ -253,7 +229,9 @@ echo $PATH
 
 # Find writable directories in PATH
 for dir in $(echo $PATH | tr ':' ' '); do
-  ls -ld $dir 2>/dev/null | grep -v "^d..x..x..x" | echo "$dir is writable";
+  if [ -w "$dir" ]; then
+    echo "$dir is writable by me"
+  fi
 done
 
 # Plant a fake binary (e.g., if a SUID script calls "service" without full path)
@@ -298,8 +276,6 @@ find / -group $(id -gn) -writable -type f 2>/dev/null
 
 | Command                          | Purpose                   |
 | -------------------------------- | ------------------------- |
-| `ls -l`                          | View permissions on files |
-| `ls -la`                         | Include hidden files      |
 | `chmod 755 file`                 | Set permissions via octal |
 | `chmod u+x file`                 | Add execute for owner     |
 | `chown user:group file`          | Change ownership          |

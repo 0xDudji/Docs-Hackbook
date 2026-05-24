@@ -1,5 +1,3 @@
-# Output Filtering & Text Processing
-
 > Raw command output is noise. Your job is to extract the signal. Master these tools and you'll spend less time staring at walls of text and more time finding what matters.
 
 ---
@@ -7,16 +5,6 @@
 ## The Mindset
 
 Linux tools follow the Unix philosophy: each command does one thing well, and you chain them together with pipes. The real power isn't in any single command — it's in **combining them**.
-
-A typical pentest workflow looks like this:
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-cat /etc/passwd | grep -v "nologin\|false" | cut -d: -f1,3,7 | sort
-```
-
-Each tool in that chain does one job. Together they take a 40-line file and give you exactly what you need in one line.
-
----
 
 ## File Descriptors & Redirection
 
@@ -43,7 +31,7 @@ find /etc/ -name passwd >> results.txt
 find / -name "*.conf" 2>/dev/null
 
 # Redirect STDOUT and STDERR to separate files
-find /etc/ -name shadow 2>errors.txt 1>results.txt
+find /etc/ -name shadow 1>results.txt 2>errors.txt
 
 # Redirect a file into a command as STDIN
 cat < results.txt
@@ -61,43 +49,6 @@ find /etc/ -name "*.conf" 2>/dev/null | grep systemd | wc -l
 <Tip>
   `2>/dev/null` is your best friend. Add it to the end of almost every `find` or enumeration command to keep your output clean.
 </Tip>
-
----
-
-## Reading Files
-
-### `cat` — Print File Contents
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-cat /etc/passwd
-```
-
-### `head` / `tail` — First or Last Lines
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# First 10 lines (default)
-head /etc/passwd
-
-# Last 10 lines (default)
-tail /etc/passwd
-
-# Specify number of lines
-head -20 /var/log/auth.log
-tail -50 /var/log/syslog
-
-# Follow a log file in real time (useful for watching auth attempts)
-tail -f /var/log/auth.log
-```
-
-### `more` / `less` — Paged Reading
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# Page through a file (press Q to quit)
-less /etc/passwd
-
-# less is better than more — it lets you scroll backward
-# and doesn't leave output in the terminal after you quit
-```
 
 ---
 
@@ -170,12 +121,20 @@ cut -d":" -f1,7 /etc/passwd
 ```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
 # Replace colons with spaces
 cat /etc/passwd | tr ":" " "
+# Before: root:x:0:0:root:/root:/bin/bash
+# After:  root x 0 0 root /root /bin/bash
 
 # Convert lowercase to uppercase
 echo "hello world" | tr "[:lower:]" "[:upper:]"
+# HELLO WORLD
 
 # Delete characters
 echo "hello 123" | tr -d "[:digit:]"
+# hello
+
+# Replace newlines with spaces (useful for compressing multi-line output)
+cat /etc/passwd | cut -d: -f1 | tr "\n" " "
+# root daemon bin sys sync cry0l1t3 htb-student
 ```
 
 ### `column` — Align Output Into a Table
@@ -183,34 +142,18 @@ echo "hello 123" | tr -d "[:digit:]"
 Makes messy output readable. Great after using `tr` to replace delimiters.
 
 ```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Without column -t
+cat /etc/passwd | grep -v "nologin\|false" | tr ":" " "
+# root x 0 0 root /root /bin/bash
+# cry0l1t3 x 1001 1001 /home/cry0l1t3 /bin/bash
+# htb-student x 1002 1002 /home/htb-student /bin/bash
+
+# With column -t
 cat /etc/passwd | grep -v "nologin\|false" | tr ":" " " | column -t
+# root         x  0     0     root  /root              /bin/bash
+# cry0l1t3     x  1001  1001        /home/cry0l1t3     /bin/bash
+# htb-student  x  1002  1002        /home/htb-student  /bin/bash
 
-# root         x  0     0      root               /root                /bin/bash
-# cry0l1t3     x  1001  1001   /home/cry0l1t3      /bin/bash
-# htb-student  x  1002  1002   /home/htb-student   /bin/bash
-```
-
-### `sort` — Sort Output
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# Alphabetical sort
-cat /etc/passwd | sort
-
-# Reverse sort
-cat /etc/passwd | sort -r
-
-# Numeric sort (useful for ports, UIDs)
-cat /etc/passwd | sort -t: -k3 -n
-```
-
-### `wc` — Count Lines, Words, Characters
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# Count lines
-cat /etc/passwd | wc -l
-
-# Count matching results from find
-find / -perm -4000 2>/dev/null | wc -l
 ```
 
 ---
@@ -284,29 +227,6 @@ grep -v "^#" /etc/ssh/sshd_config
 
 # Lines ending with "yes"
 grep -E "yes$" /etc/ssh/sshd_config
-```
-
----
-
-## Chaining It All Together
-
-This is where the real power is. A few practical pentest chains:
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# List all users with their UID and shell, formatted as a table
-cat /etc/passwd | grep -v "nologin\|false" | tr ":" " " | awk '{print $1, $3, $NF}' | column -t
-
-# Find all SUID binaries and display them cleanly
-find / -perm -4000 -type f 2>/dev/null | sort
-
-# Search for password strings in all config files under /etc
-grep -rE "password|passwd|secret" /etc/ 2>/dev/null | grep -v "^Binary"
-
-# Extract all unique IP addresses from auth log
-grep -oE "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" /var/log/auth.log | sort -u
-
-# Enumerate open ports from netstat output, clean and sorted
-netstat -tuln 2>/dev/null | grep LISTEN | awk '{print $4}' | cut -d: -f2 | sort -n
 ```
 
 ---
