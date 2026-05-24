@@ -1,9 +1,3 @@
-# User & Group Management
-
-> Users and groups define who can do what on a Linux system. From a pentester's perspective, they're a map of targets — accounts to pivot through, credentials to crack, and misconfigurations to exploit.
-
----
-
 ## The Mindset
 
 Once you're on a box, user enumeration answers critical questions:
@@ -175,7 +169,7 @@ lastlog | grep -v "Never"
 
 ---
 
-## Switching Users
+## Switching & Executing as Another User
 
 ### `su` — Switch User
 
@@ -204,6 +198,10 @@ sudo -l
 
 # Shell as root (if permitted)
 sudo /bin/bash
+
+# Both achieve a root login shell, but differently:
+# su -      → authenticates as root using root's password (disabled by default on Ubuntu)
+# sudo su - → authenticates as yourself, then sudo spawns a root shell (works if you're in the sudo group)
 sudo su -
 ```
 
@@ -262,7 +260,6 @@ With user enumeration complete, pivot to credential hunting:
 ```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
 # History files for all users (need root for other users' home dirs)
 find /home -name ".*history" 2>/dev/null -exec cat {} \;
-cat /root/.bash_history 2>/dev/null
 
 # SSH private keys across the system
 find / -name "id_rsa" -o -name "id_ecdsa" -o -name "id_ed25519" 2>/dev/null
@@ -270,45 +267,8 @@ find / -name "id_rsa" -o -name "id_ecdsa" -o -name "id_ed25519" 2>/dev/null
 # Check for password reuse — try cracked passwords on all accounts
 su - <other_user>   # try with cracked password
 
-# Readable shadow file?
-cat /etc/shadow 2>/dev/null
-
 # Any .pgpass, .my.cnf, .netrc files (stored credentials)
 find /home /root -name ".pgpass" -o -name ".my.cnf" -o -name ".netrc" 2>/dev/null | xargs cat
-```
-
----
-
-## User Enumeration Checklist
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# 1. Who am I and what groups do I belong to?
-whoami && id
-
-# 2. What can I run as sudo?
-sudo -l
-
-# 3. All interactive user accounts
-cat /etc/passwd | grep -v "nologin\|false"
-
-# 4. Any UID 0 accounts besides root?
-awk -F: '$3 == 0' /etc/passwd
-
-# 5. Can I read the shadow file?
-cat /etc/shadow 2>/dev/null
-
-# 6. Home directories and their contents
-ls -la /home/
-find /home -type f 2>/dev/null
-
-# 7. History files
-find /home /root -name ".*history" 2>/dev/null
-
-# 8. SSH keys
-find / -name "id_rsa" 2>/dev/null
-
-# 9. Who is currently logged in?
-w && last
 ```
 
 ---

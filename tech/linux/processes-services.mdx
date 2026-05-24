@@ -1,9 +1,3 @@
-# Process & Service Management
-
-> Running processes and services are a live snapshot of what the system is doing. They reveal attack surface, credential exposure, and scheduled tasks that defenders often forget to lock down.
-
----
-
 ## The Mindset
 
 Processes and services matter to a pentester for three reasons:
@@ -44,13 +38,17 @@ root      1   0.0  0.1  225948  9520  Ss   09:01   0:03  /sbin/init
 www-data 812  0.1  0.4  123456 18432  S    09:05   0:12  /usr/sbin/apache2
 ```
 
-| Column          | Meaning                                                    |
-| --------------- | ---------------------------------------------------------- |
-| `USER`          | Who owns the process — root-owned processes are high value |
-| `PID`           | Process ID                                                 |
-| `%CPU` / `%MEM` | Resource usage                                             |
-| `STAT`          | Process state (S=sleeping, R=running, Z=zombie)            |
-| `COMMAND`       | The full command — **passwords often appear here**         |
+| Column          | Meaning                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `USER`          | Who owns the process — root-owned processes are high value                                                                       |
+| `PID`           | Process ID                                                                                                                       |
+| `%CPU` / `%MEM` | Resource usage                                                                                                                   |
+| `VSZ`           | Virtual memory size — total memory the process could use                                                                         |
+| `RSS`           | Resident Set Size — physical memory currently used by the process                                                                |
+| `STAT`          | Process state — S sleeping (waiting for input), R running (actively using CPU), Z zombie (finished but not cleaned up by parent) |
+| `START`         | Time the process was started                                                                                                     |
+| `TIME`          | Total CPU time the process has consumed since it started                                                                         |
+| `COMMAND`       | The full command — **passwords often appear here**                                                                               |
 
 **Hunt for credentials in process arguments:**
 
@@ -64,6 +62,13 @@ for pid in /proc/[0-9]*/cmdline; do
     echo
 done | grep -i "pass\|secret\|key\|token"
 ```
+
+<Note>
+The first command searches `ps aux` output for common patterns used when passwords are passed as arguments — `password`/`passwd` as full argument names, `--pass` as a CLI flag, or `-p` followed by a number (common with database CLIs like mysql).
+
+The second command reads directly from `/proc` instead of `ps`. Every running process has a `cmdline` file in `/proc/[PID]/` containing its full command line, but arguments are separated by null bytes (`\0`) instead of spaces. `tr '\0' ' '` converts those null bytes to spaces so the output is readable, then `grep` filters for anything that looks like a secret.
+
+</Note>
 
 <Tip>
   Developers and sysadmins frequently pass database passwords as command-line
@@ -175,6 +180,7 @@ ss -tulnp | grep :8080     # Web app
 ss -tuln | grep "127.0.0.1"
 
 # Port forward to access them from your machine
+# ssh -L <local_port>:<remote_host>:<remote_port> <user>@<target>
 ssh -L 8080:127.0.0.1:8080 user@target
 ```
 
