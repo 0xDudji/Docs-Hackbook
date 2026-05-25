@@ -1,9 +1,3 @@
-# Network Configuration & Enumeration
-
-> The network tells you where you are, what else is reachable, and how to get there. Post-exploitation network enumeration turns a single foothold into a map of the entire environment.
-
----
-
 ## The Mindset
 
 When you land on a box, the network answers three questions:
@@ -52,12 +46,11 @@ ifconfig
 
 **What to look for:**
 
-| Field               | Pentest Relevance                                       |
-| ------------------- | ------------------------------------------------------- |
-| `inet`              | IPv4 address and subnet                                 |
-| `inet6`             | IPv6 — often forgotten, sometimes accessible            |
-| Multiple interfaces | Machine may bridge two networks — pivot opportunity     |
-| `lo` (loopback)     | `127.0.0.1` — internal services only accessible locally |
+| Field               | Pentest Relevance                                   |
+| ------------------- | --------------------------------------------------- |
+| `inet`              | IPv4 address and subnet                             |
+| `inet6`             | IPv6 — often forgotten, sometimes accessible        |
+| Multiple interfaces | Machine may bridge two networks — pivot opportunity |
 
 ### Spot a Dual-Homed Machine
 
@@ -88,8 +81,6 @@ route -n     # legacy
 # Add a static route (for pivoting)
 sudo ip route add 172.16.0.0/24 via 10.10.10.1
 ```
-
----
 
 ## Active Connections & Open Ports
 
@@ -128,20 +119,6 @@ netstat -tn
 netstat -rn
 ```
 
-**High-value internal ports to look for:**
-
-| Port        | Service    | Why It Matters               |
-| ----------- | ---------- | ---------------------------- |
-| 22          | SSH        | Lateral movement             |
-| 80 / 443    | HTTP/HTTPS | Web apps, admin panels       |
-| 3306        | MySQL      | Database credentials         |
-| 5432        | PostgreSQL | Database credentials         |
-| 6379        | Redis      | Often unauthenticated        |
-| 27017       | MongoDB    | Often unauthenticated        |
-| 445         | SMB        | Windows hosts in the network |
-| 5985 / 5986 | WinRM      | Windows remote management    |
-| 8080 / 8443 | Alt HTTP   | Dev/internal web apps        |
-
 <Tip>
   Services bound to `127.0.0.1` are invisible from outside but fully accessible
   once you're on the box. Always check for internal-only listeners — they're
@@ -167,8 +144,6 @@ dig internal-app.corp.local
 dig -x 10.10.10.5
 ```
 
-`/etc/hosts` often contains internal hostnames that reveal network architecture — domain controllers, databases, internal apps.
-
 ---
 
 ## Network Troubleshooting Tools
@@ -178,12 +153,6 @@ dig -x 10.10.10.5
 ```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
 # Basic connectivity test
 ping -c 4 8.8.8.8
-
-# Fast internal host sweep (no DNS)
-for i in $(seq 1 254); do
-    ping -c 1 -W 1 10.10.10.$i 2>/dev/null | grep "bytes from" &
-done
-wait
 ```
 
 ### `traceroute` — Path to a Host
@@ -213,6 +182,13 @@ done; wait
 
 # Port scan from the compromised host (if nmap is available)
 nmap -sn 10.10.10.0/24
+
+# If you have SSH access to the victim, scan the hidden network from your Kali instead
+# Step 1 — open a SOCKS proxy through the victim (run on your Kali)
+ssh -D 1080 user@10.10.10.1
+# Step 2 — scan through the tunnel (run on your Kali in a new terminal)
+# -sT = TCP connect scan, required because proxychains can't forward raw packets
+proxychains nmap -sT 172.16.0.0/24
 
 # TCP connect scan without nmap (bash)
 for port in 22 80 443 445 3306 5432 8080; do
@@ -291,61 +267,5 @@ sudo vim /etc/network/interfaces
 # Restart networking
 sudo systemctl restart networking
 ```
-
----
-
-## Network Enumeration Checklist
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# 1. What interfaces and IPs does this machine have?
-ip addr
-
-# 2. Is it dual-homed? (bridges two networks?)
-ip addr | grep "inet " | grep -v "127.0.0.1"
-
-# 3. What's the routing table?
-ip route
-
-# 4. What's in the ARP table? (nearby hosts)
-ip neigh
-
-# 5. What ports are listening internally?
-ss -tuln | grep "127.0.0.1"
-
-# 6. What external connections are established?
-ss -tn state established
-
-# 7. What's in /etc/hosts? (internal hostnames)
-cat /etc/hosts
-
-# 8. What DNS servers are configured?
-cat /etc/resolv.conf
-
-# 9. Firewall rules
-sudo iptables -L -n 2>/dev/null
-
-# 10. Sweep the local subnet for live hosts
-for i in $(seq 1 254); do (ping -c1 -W1 10.10.10.$i>/dev/null && echo "10.10.10.$i") & done; wait
-```
-
----
-
-## Quick Reference
-
-| Command                                      | Purpose                            |
-| -------------------------------------------- | ---------------------------------- |
-| `ip addr`                                    | Network interfaces and IPs         |
-| `ip route`                                   | Routing table                      |
-| `ip neigh`                                   | ARP table — nearby hosts           |
-| `ss -tuln`                                   | Listening ports                    |
-| `ss -tulnp`                                  | Listening ports with process names |
-| `cat /etc/hosts`                             | Local hostname resolution          |
-| `cat /etc/resolv.conf`                       | DNS servers                        |
-| `ping -c 4 <host>`                           | Reachability test                  |
-| `traceroute <host>`                          | Path to host                       |
-| `iptables -L -n`                             | Firewall rules                     |
-| `ssh -L <port>:127.0.0.1:<port> user@target` | Port forward                       |
-
----
 
 _Next: [Linux Pillaging](/tech/linux/pillaging) — with root privileges, extracting credentials, keys, configs, and sensitive data from every corner of the system._

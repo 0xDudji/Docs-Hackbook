@@ -1,9 +1,3 @@
-# Linux Pillaging
-
-> Pillaging is the art of extracting everything of value from a system you control. With elevated privileges, every config file, every log, every credential store is now readable. Know where to look.
-
----
-
 ## The Mindset
 
 Pillaging is post-exploitation with high privileges. The goal is to extract:
@@ -351,66 +345,5 @@ ps auxww | grep -E "password|passwd|secret|token|key" | grep -v grep
 cat /proc/<PID>/maps
 strings /proc/<PID>/mem 2>/dev/null | grep -E "password|secret"
 ```
-
----
-
-## Pillaging Checklist
-
-Run through this systematically after gaining elevated access:
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# CREDENTIALS IN CONFIGS
-grep -rE "password|passwd|secret|api_key" /etc/ /var/www/ /opt/ 2>/dev/null | grep -v "^Binary\|#"
-
-# SHADOW FILE
-cat /etc/shadow
-
-# SSH KEYS
-find / -name "id_rsa" -o -name "id_ecdsa" -o -name "id_ed25519" 2>/dev/null
-
-# HISTORY FILES
-find /home /root -name ".*history" 2>/dev/null | xargs cat
-
-# WEB APP CONFIGS
-find /var/www -name "*.php" -o -name ".env" -o -name "config.*" 2>/dev/null | xargs grep -l "pass\|secret" 2>/dev/null
-
-# DATABASE CREDENTIALS
-cat ~/.my.cnf 2>/dev/null
-find / -name ".pgpass" 2>/dev/null | xargs cat
-
-# AWS / CLOUD CREDENTIALS
-find / -path "*/.aws/credentials" 2>/dev/null | xargs cat
-
-# INTERESTING FILES BY NAME
-find / -type f \( -name "*password*" -o -name "*secret*" -o -name "*credential*" \) 2>/dev/null | grep -v "^/proc\|^/sys"
-
-# MAIL SPOOLS
-ls /var/mail/ && cat /var/mail/root 2>/dev/null
-
-# BACKUP FILES
-find / -name "*.bak" -o -name "*.backup" -o -name "*.old" 2>/dev/null
-
-# PROCESS ENVIRONMENT VARIABLES
-cat /proc/1/environ 2>/dev/null | tr '\0' '\n' | grep -E "PASS|SECRET|KEY|TOKEN"
-```
-
----
-
-## Quick Reference
-
-| Target             | Command                                                           |
-| ------------------ | ----------------------------------------------------------------- |
-| Password hashes    | `cat /etc/shadow`                                                 |
-| Web app DB creds   | `find /var/www -name ".env" -o -name "wp-config.php" 2>/dev/null` |
-| MySQL stored creds | `cat ~/.my.cnf`                                                   |
-| SSH private keys   | `find / -name "id_rsa" 2>/dev/null`                               |
-| Known SSH targets  | `find / -name "known_hosts" 2>/dev/null \| xargs cat`             |
-| Command history    | `find /home /root -name ".*history" 2>/dev/null \| xargs cat`     |
-| AWS credentials    | `find / -path "*/.aws/credentials" 2>/dev/null \| xargs cat`      |
-| Auth logs          | `cat /var/log/auth.log`                                           |
-| Backup files       | `find / -name "*.bak" -o -name "*.old" 2>/dev/null`               |
-| Process secrets    | `cat /proc/1/environ 2>/dev/null \| tr '\0' '\n'`                 |
-
----
 
 _Next: [System Logs](/tech/linux/system-logs) — reading and analyzing logs to understand what happened on a system and find evidence of credentials and activity._

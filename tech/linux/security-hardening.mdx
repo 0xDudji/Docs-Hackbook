@@ -1,9 +1,3 @@
-# Linux Security & Hardening
-
-> Understanding defenses makes you a better attacker. Knowing what SELinux, AppArmor, and TCP Wrappers do — and how they're configured — tells you exactly what you're up against and where the gaps are.
-
----
-
 ## The Mindset
 
 Security hardening is what defenders put in place to stop you. As a pentester you need to:
@@ -358,53 +352,6 @@ cat /etc/ssh/sshd_config | grep -v "^#\|^$"
 | `Port`                       | non-standard   | SSH running on a different port       |
 | `MaxAuthTries`               | `3`            | Limited attempts before disconnect    |
 | `X11Forwarding`              | `no`           | Can't forward GUI applications        |
-
----
-
-## Hardening Checklist (Defender's View)
-
-Understanding what a hardened system looks like helps you identify what's _missing_ on your target:
-
-```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
-# Is the system up to date?
-apt list --upgradable 2>/dev/null | wc -l
-
-# Is SSH properly configured?
-grep "PermitRootLogin\|PasswordAuthentication" /etc/ssh/sshd_config
-
-# Is SELinux or AppArmor enabled?
-getenforce 2>/dev/null || aa-status 2>/dev/null | head -3
-
-# Is a firewall running?
-sudo iptables -L | head -5
-sudo ufw status 2>/dev/null
-
-# Is fail2ban running?
-systemctl is-active fail2ban 2>/dev/null
-
-# Any world-writable files? (should be minimal)
-find / -perm -o+w -type f 2>/dev/null | grep -v "^/proc\|^/sys\|^/tmp" | wc -l
-
-# Any unnecessary SUID binaries?
-find / -perm -4000 -type f 2>/dev/null
-
-# Are unnecessary services disabled?
-systemctl list-units --type=service --state=running | wc -l
-```
-
----
-
-## Quick Reference
-
-| Tool         | Check Command              | What It Does                    |
-| ------------ | -------------------------- | ------------------------------- |
-| SELinux      | `sestatus` / `getenforce`  | MAC policy enforcement          |
-| AppArmor     | `aa-status`                | Profile-based MAC               |
-| TCP Wrappers | `cat /etc/hosts.allow`     | IP-based service access control |
-| iptables     | `iptables -L -n`           | Stateful packet filtering       |
-| UFW          | `ufw status verbose`       | iptables frontend               |
-| Fail2ban     | `fail2ban-client status`   | Brute force protection          |
-| SSH config   | `cat /etc/ssh/sshd_config` | Remote access restrictions      |
 
 ---
 
