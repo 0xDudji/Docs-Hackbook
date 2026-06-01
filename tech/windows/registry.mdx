@@ -1,0 +1,190 @@
+## The Mindset
+
+The registry is a hierarchical database storing settings for the OS, applications, users, and hardware. For a pentester it's valuable for three reasons:
+
+- **Persistence** — autostart keys (`Run`, `RunOnce`, services) that launch programs at boot or logon
+- **Stored credentials** — autologon passwords, saved VNC/PuTTY/SNMP secrets, sometimes plaintext
+- **Configuration intel** — installed software, security settings, what's enabled and what isn't
+
+---
+
+## Structure — Hives, Keys, and Values
+
+The registry is organized into **hives** (top-level roots), which contain **keys** (like folders), which contain **values** (the actual data).
+
+### The Five Root Hives
+
+| Hive                  | Abbreviation | What It Holds                                                                        |
+| --------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| `HKEY_LOCAL_MACHINE`  | `HKLM`       | System-wide settings — services, installed software, security. **The important one** |
+| `HKEY_CURRENT_USER`   | `HKCU`       | Settings for the currently logged-on user                                            |
+| `HKEY_USERS`          | `HKU`        | Settings for all loaded user profiles                                                |
+| `HKEY_CLASSES_ROOT`   | `HKCR`       | File associations and COM object registrations                                       |
+| `HKEY_CURRENT_CONFIG` | `HKCC`       | Current hardware profile                                                             |
+
+<Tip>
+  `HKLM` is where most of the pentest-relevant data lives — services, autostart
+  entries, and system security settings. `HKCU` matters for per-user persistence
+  and stored application secrets.
+</Tip>
+
+### Value Types
+
+Each value has a data type. The ones you'll encounter:
+
+| Type            | Holds                                                     |
+| --------------- | --------------------------------------------------------- |
+| `REG_SZ`        | A text string                                             |
+| `REG_DWORD`     | A 32-bit number (often a 0/1 toggle)                      |
+| `REG_BINARY`    | Raw binary data                                           |
+| `REG_EXPAND_SZ` | A string with environment variables (e.g. `%SystemRoot%`) |
+| `REG_MULTI_SZ`  | Multiple strings                                          |
+
+---
+
+## Querying the Registry
+
+### `reg query` — From CMD
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Read all values under a key
+reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run"
+
+# Read a specific value
+reg query "HKLM\System\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections
+
+# Search the entire registry for a string (e.g. "password")
+reg query HKLM /f password /t REG_SZ /s
+reg query HKCU /f password /t REG_SZ /s
+```
+
+| Flag | Meaning                      |
+| ---- | ---------------------------- |
+| `/v` | Query a specific value name  |
+| `/s` | Recurse through all subkeys  |
+| `/f` | Search for this data/pattern |
+| `/t` | Restrict to a value type     |
+
+### From PowerShell
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Read a key's values
+Get-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
+
+# Read one value
+Get-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "OneDrive"
+
+# List subkeys
+Get-ChildItem -Path "HKLM:\Software"
+```
+
+---
+
+## Persistence Keys — Where Autostart Lives
+
+These keys launch programs automatically. Attackers plant entries here for persistence; you check them to find both attacker footholds and escalation opportunities (a writable autostart entry that runs as admin).
+
+### The Run Keys
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Runs every time the user logs on
+reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run"
+
+# Runs ONCE at next logon, then deletes itself
+reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+```
+
+| Key                | When It Runs                                                            |
+| ------------------ | ----------------------------------------------------------------------- |
+| `HKLM\...\Run`     | Every boot, for all users — runs with the privileges of whoever logs on |
+| `HKCU\...\Run`     | Every logon, for the current user                                       |
+| `HKLM\...\RunOnce` | Once at next boot, then removed                                         |
+| `HKCU\...\RunOnce` | Once at next logon, then removed                                        |
+
+<Tip>
+  If a `Run` entry points to a program in a path you can write to, you can
+  replace that program with your payload — it'll execute the next time the
+  relevant user logs on. If that user is an administrator, you've escalated.
+  This is the registry version of the writable-script attack.
+</Tip>
+
+### Other Autostart Locations Worth Checking
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Winlogon — userinit and shell hooks (classic persistence)
+reg query "HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon"
+
+# Services set to auto-start (cross-reference with service misconfigs)
+reg query "HKLM\System\CurrentControlSet\Services" /s
+```
+
+---
+
+## Stored Credentials in the Registry
+
+The registry sometimes holds credentials in cleartext or weakly protected — a direct pillaging win.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Autologon credentials — sometimes plaintext password in DefaultPassword
+reg query "HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultPassword
+reg query "HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultUserName
+
+# VNC stored passwords (various products)
+reg query "HKCU\Software\ORL\WinVNC3\Password"
+reg query "HKLM\Software\TightVNC\Server" /v Password
+
+# PuTTY saved sessions (may contain proxy credentials)
+reg query "HKCU\Software\SimonTatham\PuTTY\Sessions" /s
+
+# SNMP community strings
+reg query "HKLM\System\CurrentControlSet\Services\SNMP" /s
+
+# Broad sweep for password values
+reg query HKLM /f password /t REG_SZ /s 2>nul
+reg query HKCU /f password /t REG_SZ /s 2>nul
+```
+
+<Tip>
+  **Autologon** (`DefaultPassword` in the Winlogon key) is the classic registry
+  credential find — when a machine is configured to log in automatically, the
+  password is often stored there in plaintext. Always check it.
+</Tip>
+
+---
+
+## The SAM, SYSTEM, and SECURITY Hives
+
+The most sensitive registry hives are stored as files on disk and hold the local password hashes. Reading them is a primary credential-theft technique (requires admin or `SeBackupPrivilege`).
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Save the hives to files (needs admin / SeBackupPrivilege)
+reg save HKLM\SAM C:\Users\Public\sam.save
+reg save HKLM\SYSTEM C:\Users\Public\system.save
+reg save HKLM\SECURITY C:\Users\Public\security.save
+```
+
+Then extract the hashes offline with impacket on your Linux box:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Dump local account hashes from the saved hives
+impacket-secretsdump -sam sam.save -system system.save -security security.save LOCAL
+```
+
+| Hive       | Holds                                                             |
+| ---------- | ----------------------------------------------------------------- |
+| `SAM`      | Local user account password hashes                                |
+| `SYSTEM`   | The boot key needed to decrypt the SAM                            |
+| `SECURITY` | LSA secrets, cached domain credentials, service account passwords |
+
+<Tip>
+  This is why `SeBackupPrivilege` (from the [System
+  Enumeration](/tech/windows/system-enumeration) privileges table) is so
+  valuable — it lets you read these hives even without full admin, handing you
+  every local hash on the machine.
+</Tip>
+
+---
+
+_Next: [Windows Pillaging](/tech/windows/pillaging) — automated enumeration, hunting sensitive files, and the data-exfiltration endgame._

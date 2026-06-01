@@ -1,0 +1,177 @@
+## The Mindset
+
+SMB (Server Message Block) is the protocol Windows uses for file and printer sharing. It runs on **TCP 445**. For a pentester, SMB is valuable because:
+
+- **Shares hold sensitive files** — backups, password spreadsheets, deployment scripts with embedded credentials
+- **Shares enable lateral movement** — write access to the right share spreads your payload
+- **SMB is a historic vulnerability magnet** — EternalBlue and friends live here
+
+---
+
+## Enumerating Shares — Locally
+
+If you're already on a Windows box:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List shares on the local machine
+net share
+
+# List shares on a remote host
+net view \\srv01 /all
+
+# Map a remote share to a drive letter
+net use Z: \\srv01\share
+
+# Map with credentials
+net use Z: \\srv01\share /user:CORP\john Password123
+
+# List your current mapped connections
+net use
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# PowerShell — list local shares
+Get-SmbShare
+
+# Show share permissions
+Get-SmbShareAccess -Name "share"
+```
+
+---
+
+## Enumerating Shares — From Linux
+
+This is how you'll usually do it during external/internal assessments.
+
+### smbclient — List and Browse
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List shares on a host (null/anonymous session)
+smbclient -L //10.10.10.5 -N
+
+# List shares with credentials
+smbclient -L //10.10.10.5 -U john
+
+# Connect to a specific share and browse interactively
+smbclient //10.10.10.5/share -U john
+# smb: \> ls
+# smb: \> get interesting_file.txt
+# smb: \> put payload.exe
+```
+
+### crackmapexec / netexec — The Power Tool
+
+`netexec` (the maintained successor to `crackmapexec`) is the fastest way to enumerate SMB across one host or a whole subnet:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Enumerate shares and access on a host
+netexec smb 10.10.10.5 -u john -p Password123 --shares
+
+# Across an entire subnet — find every share you can touch
+netexec smb 10.10.10.0/24 -u john -p Password123 --shares
+
+# Check for null session access (no credentials)
+netexec smb 10.10.10.5 -u '' -p '' --shares
+
+# Pass-the-hash
+netexec smb 10.10.10.5 -u Administrator -H <NTLM_hash> --shares
+
+# Spider a share for interesting files
+netexec smb 10.10.10.5 -u john -p Password123 -M spider_plus
+```
+
+<Tip>
+  Always test for **null/anonymous sessions** first (`-u '' -p ''`).
+  Misconfigured shares that allow anonymous access are common and hand you files
+  before you've authenticated to anything.
+</Tip>
+
+### Mounting a Share on Linux
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Mount an SMB share to a local directory
+sudo mount -t cifs //10.10.10.5/share /mnt/share -o username=john,password=Password123
+
+# Then browse it like any local folder
+ls -la /mnt/share
+```
+
+---
+
+## NTFS vs Share Permissions — Again
+
+This came up on the [Permissions & icacls](/tech/windows/permissions-icacls) page, and it's critical for SMB. When you access a file over the network, **both** permission layers apply and **the most restrictive wins**:
+
+| Layer                 | Controls                             | Applies                    |
+| --------------------- | ------------------------------------ | -------------------------- |
+| **Share permissions** | Access to the share over the network | Network access only        |
+| **NTFS permissions**  | Access to the actual files/folders   | Always (local and network) |
+
+So a share might be set to "Everyone: Full Control" at the share level — but if NTFS only grants you Read on the files inside, you get Read. This is why you check both, and why a wide-open share permission doesn't always mean wide-open files.
+
+<Tip>
+  The reverse misconfiguration is the useful one: an admin sets restrictive NTFS
+  permissions but forgets the share is set to Everyone:Full. If you can reach it
+  over the network and NTFS happens to allow your account, you're in. Always
+  check what you can actually read and write rather than assuming from one
+  layer.
+</Tip>
+
+---
+
+## Windows Defender Firewall
+
+The firewall controls what's reachable. Understanding its state tells you what you can connect to and what might be blocking your callbacks.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check firewall state for all profiles
+netsh advfirewall show allprofiles
+
+# List firewall rules
+netsh advfirewall firewall show rule name=all
+
+# Check if a specific port is allowed (look through the rules)
+netsh advfirewall firewall show rule name=all | findstr 445
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# PowerShell — firewall profile status
+Get-NetFirewallProfile | Select-Object Name, Enabled
+
+# List inbound allow rules
+Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True
+```
+
+<Tip>
+  When your reverse shell won't connect back, the host firewall blocking
+  outbound traffic on your chosen port is a common cause. Try common allowed
+  ports (443, 80) for your callbacks — they're rarely blocked outbound.
+</Tip>
+
+---
+
+## SMB Vulnerabilities — Know the Classics
+
+SMB has a long history of critical vulnerabilities. You don't need exploit internals, but you should recognize the names and check for them:
+
+| Vulnerability      | CVE            | What It Is                                                                          |
+| ------------------ | -------------- | ----------------------------------------------------------------------------------- |
+| **EternalBlue**    | CVE-2017-0144  | SMBv1 RCE — the WannaCry/NotPetya vector. Unauthenticated SYSTEM on unpatched hosts |
+| **SMBGhost**       | CVE-2020-0796  | SMBv3 compression RCE                                                               |
+| **PrintNightmare** | CVE-2021-34527 | Print Spooler (related service) RCE/LPE                                             |
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check for EternalBlue with nmap
+nmap -p445 --script smb-vuln-ms17-010 10.10.10.5
+
+# netexec also flags SMB signing and version info
+netexec smb 10.10.10.0/24
+```
+
+<Tip>
+  SMBv1 being enabled at all is a red flag — it's deprecated and the EternalBlue vector. `netexec smb <target>` shows the SMB version and whether signing is required (unsigned SMB enables relay attacks).
+</Tip>
+
+---
+
+_Next: [The Windows Registry](/tech/windows/registry) — the central config database, where persistence lives and credentials sometimes hide._

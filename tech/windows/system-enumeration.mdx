@@ -1,0 +1,291 @@
+## The Mindset
+
+When you land on a Windows target, three questions drive everything:
+
+- **Who am I?** — Your user, privileges, and group memberships
+- **What can I do?** — Enabled privileges, especially the ones that lead to escalation
+- **What is this machine?** — OS version, patch level, scheduled tasks, services
+
+## Who Am I?
+
+### `whoami` — Current User
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+whoami
+# win01\john
+```
+
+The output is in `COMPUTERNAME\USERNAME` format. The **hostname** is the name assigned to the machine itself — set during Windows installation or by an admin. It's what identifies this computer on the local network, like a label on a box. `win01` is that label. `john` is the user account on it. On a domain-joined machine it shows `DOMAIN\USERNAME` instead — that tells you whether you're a local account or a domain account at a glance.
+
+### `whoami /priv` — Your Privileges
+
+This is the single most important enumeration command on Windows. It lists the privileges assigned to your token — and several of them are direct paths to SYSTEM.
+
+A **token** is Windows' internal representation of your security context. Every process runs under one. When you log in or a service starts, Windows creates a token and attaches it to your session — it holds your identity (SID), your group memberships, and your privileges. `whoami /priv` reads that token and shows you what rights the OS will honour for anything your process tries to do.
+
+Tokens are kernel objects — they live in kernel memory, not as files on disk. The easiest way to see your full token is `whoami /all`, which combines your user, groups, and privileges into one view:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+whoami /all
+
+USER INFORMATION
+----------------
+User Name  SID
+========== =============================================
+ws01\john  S-1-5-21-674899381-4069889467-2080702030-1002
+
+GROUP INFORMATION
+-----------------
+Group Name                       Type             SID          Attributes
+================================ ================ ============ ==========================
+BUILTIN\Administrators           Alias            S-1-5-32-544 Enabled by default, Enabled group
+NT AUTHORITY\Authenticated Users Well-known group S-1-5-11     Mandatory group, Enabled by default, Enabled group
+Mandatory Label\High Mandatory Level Label         S-1-16-12288 Integrity
+
+PRIVILEGES INFORMATION
+----------------------
+Privilege Name                Description                               State
+============================= ========================================= =======
+SeImpersonatePrivilege        Impersonate a client after authentication Enabled
+SeDebugPrivilege              Debug programs                            Enabled
+```
+
+To inspect the token of _another_ running process (for example, to see if a SYSTEM process has a token you can steal), use a tool like [Process Hacker](https://processhacker.sourceforge.io/) — right-click any process → Properties → Token tab.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+whoami /priv
+
+PRIVILEGES INFORMATION
+----------------------
+Privilege Name                Description                               State
+============================= ========================================= =======
+SeChangeNotifyPrivilege       Bypass traverse checking                  Enabled
+SeImpersonatePrivilege        Impersonate a client after authentication Enabled
+SeIncreaseWorkingSetPrivilege Increase a process working set            Enabled
+```
+
+**What these privileges mean:**
+
+| Privilege                       | What It Does                                                                       | Why It Matters                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `SeChangeNotifyPrivilege`       | Bypass directory traversal checks to navigate folders without explicit permissions | Minor — enabled for almost everyone, rarely useful                               |
+| `SeImpersonatePrivilege`        | Impersonate a client after authentication                                          | **Major** — leads to SYSTEM via Potato attacks (JuicyPotato, PrintSpoofer, etc.) |
+| `SeIncreaseWorkingSetPrivilege` | Increase the memory available to a process                                         | Minor                                                                            |
+
+<Tip>
+  `SeImpersonatePrivilege` and `SeAssignPrimaryTokenPrivilege` are the
+  privileges to look for. Service accounts (like `iis apppool`, `mssql`) usually
+  have them — and they turn a service-account shell into SYSTEM with a Potato
+  exploit.
+</Tip>
+
+**High-value privileges to always watch for:**
+
+| Privilege                       | Escalation Path                                      |
+| ------------------------------- | ---------------------------------------------------- |
+| `SeImpersonatePrivilege`        | Potato attacks → SYSTEM                              |
+| `SeAssignPrimaryTokenPrivilege` | Token manipulation → SYSTEM                          |
+| `SeBackupPrivilege`             | Read any file (SAM, SYSTEM hives) → credential theft |
+| `SeRestorePrivilege`            | Write any file → overwrite system binaries           |
+| `SeDebugPrivilege`              | Access any process memory → dump LSASS               |
+| `SeTakeOwnershipPrivilege`      | Take ownership of any object → grant yourself access |
+| `SeLoadDriverPrivilege`         | Load a malicious kernel driver → SYSTEM              |
+
+---
+
+## What Groups Am I In?
+
+### `whoami /groups` — Group Memberships
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+whoami /groups
+
+GROUP INFORMATION
+-----------------
+Group Name                           Type             SID          Attributes
+==================================== ================ ============ ==========
+BUILTIN\Event Log Readers            Alias            S-1-5-32-573 Enabled group
+BUILTIN\Remote Desktop Users         Alias            S-1-5-32-555 Enabled group
+BUILTIN\Users                        Alias            S-1-5-32-545 Enabled group
+NT AUTHORITY\NETWORK                 Well-known group S-1-5-2      Enabled group
+NT AUTHORITY\Authenticated Users     Well-known group S-1-5-11     Enabled group
+Mandatory Label\High Mandatory Level Label            S-1-16-12288
+```
+
+The output has four columns. **Type** and **Attributes** are the ones that need explanation:
+
+**Type** — what kind of security principal this entry is:
+
+| Type               | Meaning                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Alias`            | A local security group stored on this machine. BUILTIN groups (Administrators, Users, Remote Desktop Users) are always Alias type.         |
+| `Well-known group` | A group predefined by Windows with a fixed SID that is the same on every Windows machine — things like `NT AUTHORITY\Authenticated Users`. |
+| `Label`            | Not a group at all — this is the Mandatory Integrity Level marker on your token (see below).                                               |
+| `Domain group`     | A group from Active Directory. Only appears on domain-joined machines.                                                                     |
+
+**Attributes** — what role the group currently plays in your token:
+
+| Attribute                                            | Meaning                                                                                                                           |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Mandatory group, Enabled by default, Enabled group` | Always in your token and always active. Cannot be removed or disabled for the lifetime of this session.                           |
+| `Enabled group`                                      | Active and used for access checks right now.                                                                                      |
+| `Deny only`                                          | The group is in your token but can **only** match deny rules — it cannot grant you access to anything. Seen on restricted tokens. |
+| `Integrity`                                          | Marks the Mandatory Label entry — it's an integrity level, not a real group membership.                                           |
+
+**Groups worth noting:**
+
+| Group                     | Why It Matters                                                 |
+| ------------------------- | -------------------------------------------------------------- |
+| `Administrators`          | Full control — you've already won                              |
+| `Remote Desktop Users`    | Can RDP into the box                                           |
+| `Remote Management Users` | Can use WinRM / PowerShell Remoting                            |
+| `Backup Operators`        | Can read/write any file regardless of ACL → credential theft   |
+| `Event Log Readers`       | Can read event logs — may contain credentials in command lines |
+| `DnsAdmins`               | Can load a malicious DLL into the DNS service → SYSTEM         |
+| `Hyper-V Administrators`  | Effective control over the host                                |
+
+The **Mandatory Label** at the bottom shows your integrity level. Windows tags every process with one of these levels and enforces a rule: a lower-integrity process cannot write to or influence a higher-integrity one. There are four levels:
+
+| Label    | What it means                                                                              |
+| -------- | ------------------------------------------------------------------------------------------ |
+| `Low`    | Sandboxed — used by things like browser tab processes. Very restricted write access.       |
+| `Medium` | Standard logged-in user. Most processes run here. UAC has not been bypassed.               |
+| `High`   | Elevated — you clicked "Run as administrator" or bypassed UAC. Admin-level token.          |
+| `System` | The OS itself. Services like LSASS and the kernel run here. This is the escalation target. |
+
+When you see `High Mandatory Level` in your groups output, your current process is already elevated. `Medium` means you have admin group membership but UAC is still limiting you — bypassing UAC would move you to `High`.
+
+---
+
+## What Is This Machine?
+
+### `systeminfo` — Full System Details
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+systeminfo
+```
+
+This shows OS version, build, install date, hotfixes, and network config — everything you need for CVE research. Note that it can fail with **Access denied** for low-privilege users in some configurations:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+systeminfo
+# Program 'systeminfo.exe' failed to run: Access is denied
+```
+
+If it's blocked, fall back to PowerShell (see below).
+
+### `wmic qfe` — Installed Patches
+
+`qfe` stands for Quick Fix Engineering — it lists installed Windows updates. Compare these against known CVEs to find missing patches.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+wmic qfe
+# Lists all installed hotfixes (KB numbers and install dates)
+```
+
+Like `systeminfo`, this may return **Access denied** for limited accounts.
+
+### PowerShell — OS Version (when CMD tools are blocked)
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# OS version and build number
+Get-WmiObject -Class Win32_OperatingSystem | select Version,BuildNumber
+
+# Version    BuildNumber
+# -------    -----------
+# 10.0.19041 19041
+```
+
+The build number (e.g. `19041`) maps to a specific Windows release — search it to find applicable exploits.
+
+---
+
+## Scheduled Tasks
+
+If you can modify a script that a privileged task runs, that's a direct escalation path.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List all scheduled tasks in full detail
+schtasks /query /fo LIST /v
+```
+
+**What to look for in the output:**
+
+```
+TaskName:        \CorpBackupAgent
+Task To Run:     powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\CorpBackup\Scripts\backupprep.ps1
+Run As User:     Administrator
+Scheduled Task State: Enabled
+Repeat: Every:   0 Hour(s), 2 Minute(s)
+```
+
+This is gold:
+
+- **Run As User: Administrator** — the script runs with admin privileges
+- **Task To Run** — points to `backupprep.ps1`, a script on disk
+- **Repeat: Every 2 minutes** — runs frequently, so you don't have to wait long
+
+Check the script's permissions with `icacls` (covered on the [Permissions & icacls](/tech/windows/permissions-icacls) page).
+
+<Tip>
+  Filter for non-Microsoft tasks — those are the custom ones admins set up, and
+  they're far more likely to be misconfigured than the built-in Windows tasks.
+  The author field and a script path outside `C:\Windows` are the tells.
+
+In PowerShell, filter them directly:
+
+```powershell
+Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\Microsoft*' } | Select-Object TaskName, TaskPath
+```
+
+Or from CMD, pipe through `findstr` and look for lines where the author is not Microsoft:
+
+```cmd
+schtasks /query /fo LIST /v | findstr /i "TaskName: Run As User: Task To Run:"
+```
+
+Any task running as `Administrator` or `SYSTEM` with a script path in `C:\ProgramData`, `C:\Temp`, or another user-writable directory is worth examining.
+
+</Tip>
+
+---
+
+## Security Identifiers (SID)
+
+Every user and group has a unique SID. Windows tracks rights by SID, not by name — so two users named the same are still distinct.
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+whoami /user
+
+USER INFORMATION
+----------------
+User Name  SID
+========== =============================================
+ws01\bob   S-1-5-21-674899381-4069889467-2080702030-1002
+```
+
+**SID breakdown:**
+
+```
+S    -  1         -  5                   -  21  -  674899381-4069889467-2080702030  -  1002
+│       │            │                      │      │                                   │
+SID  Revision    Identifier Authority    Type   Domain/Computer identifier            RID
+```
+
+| Part                              | Meaning                                                                                                                                                                                                                                                                      |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `S`                               | Marks the string as a SID                                                                                                                                                                                                                                                    |
+| `1`                               | Revision level (always 1)                                                                                                                                                                                                                                                    |
+| `5`                               | Identifier authority (5 = NT Authority)                                                                                                                                                                                                                                      |
+| `21`                              | Sub-authority type. `21` means this is a domain or machine-local account SID (as opposed to built-in SIDs like `S-1-5-32` which use a different number and have no machine identifier after them).                                                                           |
+| `674899381-4069889467-2080702030` | Three random 32-bit numbers generated once when the domain or local machine was first set up. Together they form a unique fingerprint for the issuing machine or domain. No two machines share this combination — it's what makes SIDs globally unique across installations. |
+| `1002`                            | The RID — distinguishes the account. `500` = built-in Administrator, `501` = Guest, `512` = Domain Admins                                                                                                                                                                    |
+
+<Tip>
+  RID `500` is always the real local Administrator account, even if it's been
+  renamed. RID `1000`+ are regular accounts created after install.
+</Tip>
+
+---
+
+_Next: [Windows Architecture & File System](/tech/windows/architecture-filesystem) — the directory structure, file systems, and where the interesting files live._

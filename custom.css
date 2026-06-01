@@ -2,6 +2,37 @@ a[href*="mintlify"] {
   display: none !important;
 }
 
+/* Checklist items */
+.cl-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  cursor: pointer;
+  padding: 0.3rem 0;
+  line-height: 1.6;
+  user-select: none;
+}
+
+.cl-item input[type="checkbox"] {
+  accent-color: #DC2626;
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.cl-item span {
+  user-select: text;
+}
+
+.cl-item:has(input[type="checkbox"]:checked) span {
+  opacity: 0.4;
+  text-decoration: line-through;
+  text-decoration-color: #DC2626;
+  transition: opacity 0.2s ease;
+}
+
 /* Hide left sidebar ONLY when homepage wrapper exists */
 body:has(.homepage) #sidebar,
 body:has(.homepage) #sidebar-content {

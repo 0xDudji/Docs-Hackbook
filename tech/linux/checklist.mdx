@@ -1,0 +1,108 @@
+---
+title: "Linux Enumeration Checklist"
+description: "Step-by-step checklist for every Linux box — from initial shell to full pillage."
+---
+
+<Note>
+  **Phase 1** covers what to do the moment you get a shell. **Phase 2** covers what to do once you have root or elevated access.
+</Note>
+
+<Tabs>
+  <Tab title="Phase 1 — Enumeration">
+
+    <AccordionGroup>
+
+      <Accordion title="Identity" icon="user" defaultOpen>
+        <label className="cl-item"><input type="checkbox" /><span>Who am I? → <a href="/tech/linux/system-enumeration">System Enumeration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What groups do I belong to? → <a href="/tech/linux/system-enumeration">System Enumeration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What can I run as sudo? → <a href="/tech/linux/user-management">User & Group Management</a></span></label>
+      </Accordion>
+
+      <Accordion title="The Machine" icon="computer">
+        <label className="cl-item"><input type="checkbox" /><span>What is this machine's hostname and what role does it play? → <a href="/tech/linux/system-enumeration">System Enumeration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What OS and kernel version is running? → <a href="/tech/linux/system-enumeration">System Enumeration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Is the kernel vulnerable to a known exploit? → <a href="/tech/linux/system-enumeration">System Enumeration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What CPU architecture is this? → <a href="/tech/linux/system-enumeration">System Enumeration</a></span></label>
+      </Accordion>
+
+      <Accordion title="Other Users" icon="users">
+        <label className="cl-item"><input type="checkbox" /><span>Who else has an account on this machine? → <a href="/tech/linux/user-management">User & Group Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Who is currently logged in? → <a href="/tech/linux/user-management">User & Group Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any UID 0 accounts besides root? → <a href="/tech/linux/user-management">User & Group Management</a></span></label>
+      </Accordion>
+
+      <Accordion title="Files & Permissions" icon="folder-open">
+        <label className="cl-item"><input type="checkbox" /><span>Are there any SUID or SGID binaries? → <a href="/tech/linux/permissions">Permission Analysis</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any world-writable files or directories? → <a href="/tech/linux/permissions">Permission Analysis</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any interesting files I can find by name? → <a href="/tech/linux/filesystem-navigation">Finding Files & Directories</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any config files containing credentials? → <a href="/tech/linux/filesystem-navigation">Finding Files & Directories</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any backup or old files left behind? → <a href="/tech/linux/filesystem-navigation">Finding Files & Directories</a></span></label>
+      </Accordion>
+
+      <Accordion title="Processes & Services" icon="gear">
+        <label className="cl-item"><input type="checkbox" /><span>What processes are running and who owns them? → <a href="/tech/linux/processes-services">Process & Service Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are any processes passing credentials as arguments? → <a href="/tech/linux/processes-services">Process & Service Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What services are running? → <a href="/tech/linux/processes-services">Process & Service Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What ports are listening, especially on localhost? → <a href="/tech/linux/processes-services">Process & Service Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any cron jobs running as root? → <a href="/tech/linux/processes-services">Process & Service Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are any cron job scripts writable? → <a href="/tech/linux/processes-services">Process & Service Management</a></span></label>
+      </Accordion>
+
+      <Accordion title="Network" icon="network-wired">
+        <label className="cl-item"><input type="checkbox" /><span>What interfaces and IP addresses does this machine have? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Is this machine dual-homed — does it bridge two networks? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What does the routing table look like? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What other hosts are on the same subnet? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What established connections are active right now? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What internal hostnames are in /etc/hosts? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+      </Accordion>
+
+      <Accordion title="Security Mechanisms" icon="shield-halved">
+        <label className="cl-item"><input type="checkbox" /><span>Is SELinux or AppArmor enabled and in enforcing mode? → <a href="/tech/linux/security-hardening">Security & Hardening</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Is a firewall active and what rules are in place? → <a href="/tech/linux/security-hardening">Security & Hardening</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Is fail2ban running and what is the ban threshold? → <a href="/tech/linux/security-hardening">Security & Hardening</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What does the SSH config allow? → <a href="/tech/linux/security-hardening">Security & Hardening</a></span></label>
+      </Accordion>
+
+    </AccordionGroup>
+
+  </Tab>
+  <Tab title="Phase 2 — Pillaging">
+
+    <AccordionGroup>
+
+      <Accordion title="Credentials" icon="key" defaultOpen>
+        <label className="cl-item"><input type="checkbox" /><span>Can I read /etc/shadow? → <a href="/tech/linux/user-management">User & Group Management</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any SSH private keys on the system? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What is in every user's command history? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there credentials in any web application config files? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there credentials in any database config files? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there stored cloud credentials (AWS, GCP, Docker)? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any .netrc, .pgpass, or .my.cnf files? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any files named with sensitive keywords (password, secret, token)? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+      </Accordion>
+
+      <Accordion title="Databases" icon="database">
+        <label className="cl-item"><input type="checkbox" /><span>Can I connect directly to any running database? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any SQLite database files on the system? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+      </Accordion>
+
+      <Accordion title="Logs" icon="file-lines">
+        <label className="cl-item"><input type="checkbox" /><span>Do the auth logs show successful logins and from where? → <a href="/tech/linux/system-logs">System Logs</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Do the auth logs show what sudo commands were run? → <a href="/tech/linux/system-logs">System Logs</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Do any log files contain cleartext credentials? → <a href="/tech/linux/system-logs">System Logs</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Do the web server logs expose credentials in URLs? → <a href="/tech/linux/system-logs">System Logs</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>What does the cron execution history in syslog show? → <a href="/tech/linux/system-logs">System Logs</a></span></label>
+      </Accordion>
+
+      <Accordion title="Lateral Movement" icon="arrow-right-arrow-left">
+        <label className="cl-item"><input type="checkbox" /><span>What hosts have been SSH'd into from this machine? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any authorized_keys files that reveal access relationships? → <a href="/tech/linux/pillaging">Linux Pillaging</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Are there any other networks reachable from this machine? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+        <label className="cl-item"><input type="checkbox" /><span>Can I pivot to a second network using SSH port forwarding or proxychains? → <a href="/tech/linux/network-configuration">Network Configuration</a></span></label>
+      </Accordion>
+
+    </AccordionGroup>
+
+  </Tab>
+</Tabs>

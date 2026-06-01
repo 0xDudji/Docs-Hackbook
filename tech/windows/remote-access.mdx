@@ -1,0 +1,173 @@
+## The Mindset
+
+Remote access on Windows matters in two directions:
+
+- **Getting in** — RDP, WinRM, SMB, and PsExec are how you move to and between Windows hosts using credentials you've found
+- **What you get once you're in** — the _type_ of session (interactive vs non-interactive) determines whether credentials are cached in memory for you to steal
+
+The second point is the one people miss. A user who logged in via RDP leaves credentials in LSASS. A service account running a process may not.
+
+---
+
+## RDP — Remote Desktop Protocol
+
+RDP gives you a full graphical desktop session. It listens on **TCP 3389** by default. To use it you need valid credentials and the account must be in the **Remote Desktop Users** group (or be an admin).
+
+### Connecting from Linux
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# xfreerdp — the standard Linux RDP client
+xfreerdp /u:john /p:Password123 /v:10.10.10.5
+
+# With a domain
+xfreerdp /d:CORP /u:john /p:Password123 /v:10.10.10.5
+
+# Useful flags: drive redirection (move files), ignore cert, full screen
+xfreerdp /u:john /p:Password123 /v:10.10.10.5 /drive:share,/tmp /cert:ignore /f
+```
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# rdesktop — older alternative
+rdesktop -u john -p Password123 10.10.10.5
+```
+
+### Checking if RDP Is Available
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Is the port listening?
+netstat -ano | findstr 3389
+
+# Is RDP enabled? (0 = enabled, 1 = disabled)
+reg query "HKLM\System\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections
+
+# Who's in the Remote Desktop Users group?
+net localgroup "Remote Desktop Users"
+```
+
+<Tip>
+  RDP creates an **interactive logon**, which means the user's credentials get
+  cached in LSASS memory. If you RDP in as a user (or an admin RDPs in while
+  you're on the box), those credentials become dumpable. This is why RDP
+  sessions are a credential-theft opportunity.
+</Tip>
+
+---
+
+## WinRM — Windows Remote Management
+
+WinRM is the protocol behind PowerShell Remoting. It listens on **TCP 5985** (HTTP) and **5986** (HTTPS). The account needs to be in the **Remote Management Users** group or be an admin.
+
+### Connecting from Linux
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# evil-winrm — the go-to tool for WinRM access
+evil-winrm -i 10.10.10.5 -u john -p Password123
+
+# With a hash instead of a password (pass-the-hash)
+evil-winrm -i 10.10.10.5 -u john -H <NTLM_hash>
+```
+
+### From Windows (PowerShell Remoting)
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Run a command on a remote host
+Invoke-Command -ComputerName srv01 -Credential CORP\john -ScriptBlock { whoami }
+
+# Open an interactive remote session
+Enter-PSSession -ComputerName srv01 -Credential CORP\john
+```
+
+### Checking if WinRM Is Available
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+netstat -ano | findstr "5985 5986"
+```
+
+<Tip>
+  `evil-winrm` is one of the most useful tools for Windows engagements — it
+  gives you a clean PowerShell shell, supports pass-the-hash, and has built-in
+  helpers for uploading files and loading scripts. If you find admin or Remote
+  Management Users credentials, this is your first stop.
+</Tip>
+
+---
+
+## PsExec — Remote Execution via SMB
+
+PsExec (Sysinternals) executes commands on a remote host over SMB (**TCP 445**). It's the classic admin-credential-to-SYSTEM-shell tool.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Spawn an interactive SYSTEM shell on a remote host
+psexec.exe \\10.10.10.5 -u Administrator -p Password123 -s cmd.exe
+```
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# impacket's psexec from Linux
+impacket-psexec CORP/Administrator:Password123@10.10.10.5
+
+# Pass-the-hash variant
+impacket-psexec -hashes :<NTLM_hash> Administrator@10.10.10.5
+```
+
+The `-s` flag runs as SYSTEM. PsExec needs admin credentials on the target because it creates and starts a service remotely — which also makes it noisy and easily detected.
+
+---
+
+## Interactive vs Non-Interactive Sessions
+
+This is the concept that ties credential theft together. Windows logon types determine whether credentials are cached in memory.
+
+| Logon Type                      | How It Happens                  | Credentials in Memory?              |
+| ------------------------------- | ------------------------------- | ----------------------------------- |
+| **Interactive (Type 2)**        | Logging in at the console / RDP | **Yes** — cached in LSASS           |
+| **Network (Type 3)**            | Accessing a share, PsExec       | Usually no (credentials not cached) |
+| **Batch (Type 4)**              | Scheduled tasks                 | Sometimes — depends on config       |
+| **Service (Type 5)**            | Service accounts                | Yes — the service account creds     |
+| **RemoteInteractive (Type 10)** | RDP                             | **Yes** — cached in LSASS           |
+
+**Why this matters for you:**
+
+- An admin who **RDPs in** (interactive) leaves dumpable credentials in LSASS — wait for it, then dump
+- Someone connecting over **SMB or PsExec** (network logon) typically does _not_ leave reusable credentials behind
+- **Service accounts** run continuously and their credentials sit in LSASS the whole time
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# See current logon sessions and their types
+query user
+quser
+
+# Event logs show logon types (4624 = successful logon, look at the Logon Type field)
+wevtutil qe Security /q:"*[System[(EventID=4624)]]" /c:5 /rd:true /f:text
+```
+
+<Tip>
+  This is why patience pays off on Windows. If you have a foothold but limited
+  privileges, monitoring for an administrator to RDP in — then dumping LSASS
+  once they do — can hand you admin credentials without exploiting anything.
+</Tip>
+
+---
+
+## Service Accounts
+
+Service accounts run services and scheduled tasks. They're worth understanding because they often have elevated privileges and their credentials persist in memory.
+
+| Account                                 | Scope                    | Notes                                 |
+| --------------------------------------- | ------------------------ | ------------------------------------- |
+| `LocalSystem` (SYSTEM)                  | Highest local privilege  | The goal of most local escalation     |
+| `LocalService`                          | Limited local privileges | Network access as anonymous           |
+| `NetworkService`                        | Limited local privileges | Network access as the machine account |
+| **Managed Service Accounts**            | Domain-managed           | Auto-rotating passwords               |
+| **Virtual accounts** (`NT SERVICE\...`) | Per-service identity     | Used by IIS app pools, SQL Server     |
+
+<Tip>
+  Service accounts like `iis apppool\defaultapppool` and SQL Server's service
+  account almost always have `SeImpersonatePrivilege` — which means a shell as
+  one of them is a short hop to SYSTEM via a Potato attack. This connects back
+  to the privileges you checked with `whoami /priv` in [System
+  Enumeration](/tech/windows/system-enumeration).
+</Tip>
+
+---
+
+_Next: [SMB & Network Shares](/tech/windows/smb-shares) — enumerating shares, mounting them, and the permission layers that decide what you can reach._

@@ -1,0 +1,178 @@
+## The Mindset
+
+On Windows, permissions are controlled by **ACLs** (Access Control Lists). Every file and folder has one, and it lists exactly which users and groups can do what. Your job as a pentester:
+
+- **Find what you can write to** — especially scripts and binaries that run as a higher-privileged user
+- **Find what you can read that you shouldn't** — config files, credential stores
+- **Spot inheritance mistakes** — a loose permission set high in the tree gets inherited all the way down
+
+---
+
+## How NTFS Permissions Work
+
+An ACL is made up of **ACEs** (Access Control Entries). Each ACE grants or denies a specific permission to a specific user or group.
+
+The basic permission types, from least to most access:
+
+| Permission              | What It Allows                                                  |
+| ----------------------- | --------------------------------------------------------------- |
+| **Read (R)**            | View file contents and attributes                               |
+| **Read & Execute (RX)** | Read plus run executables                                       |
+| **Write (W)**           | Modify file contents and attributes                             |
+| **Modify (M)**          | Read, write, execute, and delete the file                       |
+| **Full Control (F)**    | Everything, including changing permissions and taking ownership |
+
+<Tip>
+  For escalation, **Write (W)**, **Modify (M)**, and **Full Control (F)** on a
+  file that runs as someone else are what you're hunting. If you can modify a
+  script or binary that SYSTEM or Administrator executes, you control what runs
+  as SYSTEM or Administrator.
+</Tip>
+
+---
+
+## `icacls` — Reading Permissions
+
+`icacls` is the primary command-line tool for viewing and modifying NTFS permissions.
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+icacls "C:\ProgramData\CorpBackup\Scripts"
+```
+
+**Example output:**
+
+```
+C:\ProgramData\CorpBackup\Scripts BUILTIN\Administrators:(I)(F)
+                                  NT AUTHORITY\SYSTEM:(I)(F)
+                                  BUILTIN\Users:(I)(M)
+                                  CORP\john:(I)(W)
+```
+
+Each line is one ACE: a principal (user/group) followed by their permissions in parentheses.
+
+### Permission Codes
+
+| Code | Meaning        |
+| ---- | -------------- |
+| `F`  | Full Control   |
+| `M`  | Modify         |
+| `RX` | Read & Execute |
+| `R`  | Read only      |
+| `W`  | Write only     |
+| `D`  | Delete         |
+
+### Inheritance Codes
+
+These appear in parentheses alongside the permission and tell you _where_ the permission comes from:
+
+| Code   | Meaning                                                                             |
+| ------ | ----------------------------------------------------------------------------------- |
+| `(I)`  | Inherited from the parent folder                                                    |
+| `(OI)` | Object Inherit — applies to files in the folder                                     |
+| `(CI)` | Container Inherit — applies to subfolders                                           |
+| `(IO)` | Inherit Only — the ACE doesn't apply to the object itself, only what it passes down |
+| `(NP)` | No Propagate — inheritance doesn't go beyond one level                              |
+
+So `BUILTIN\Users:(I)(M)` means the Users group has **Modify** rights, **inherited** from the parent. If your user is in `Users`, you can modify everything in that folder — including any script a privileged task runs from it.
+
+---
+
+## Finding Writable Misconfigurations
+
+This is the core pentest workflow. You're looking for files or folders writable by your user (or a group you're in) that are executed by something more privileged.
+
+### Check a Specific File or Folder
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check the script a scheduled task runs
+icacls "C:\ProgramData\CorpBackup\Scripts\backupprep.ps1"
+
+# If you see your user or Users/Everyone with (W), (M), or (F) — you can hijack it
+```
+
+### Hunt Writable Files with PowerShell
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check write access to a specific file
+Get-Acl "C:\ProgramData\CorpBackup\Scripts\backupprep.ps1" | Format-List
+
+# Recursively find files your user can write to (using accesschk is cleaner — see below)
+Get-ChildItem -Path "C:\Program Files" -Recurse -ErrorAction SilentlyContinue |
+  ForEach-Object {
+    try {
+      $acl = Get-Acl $_.FullName -ErrorAction Stop
+      $acl.Access | Where-Object { $_.FileSystemRights -match "Write|Modify|FullControl" -and $_.IdentityReference -match "Users|Everyone|Authenticated" }
+    } catch {}
+  }
+```
+
+### accesschk (Sysinternals) — The Cleaner Way
+
+`accesschk` from Sysinternals is purpose-built for this and far faster:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find files writable by the Users group under a path
+accesschk.exe -uws "Users" "C:\Program Files"
+
+# Find writable directories
+accesschk.exe -uwds "Users" "C:\"
+
+# Check write access for the Everyone group
+accesschk.exe -uwqs "Everyone" "C:\*"
+```
+
+| Flag | Meaning                             |
+| ---- | ----------------------------------- |
+| `-u` | Suppress errors                     |
+| `-w` | Show only objects with write access |
+| `-s` | Recurse into subdirectories         |
+| `-d` | Directories only                    |
+| `-q` | Omit the banner                     |
+
+<Tip>
+  Writable **service binaries** and **scheduled-task scripts** are the
+  highest-value finds. Cross-reference what you find here against the services
+  and tasks from the [Processes & Services](/tech/windows/processes-services)
+  page — a writable file means nothing until you know something privileged runs
+  it.
+</Tip>
+
+---
+
+## Modifying Permissions
+
+Once you've escalated (or if you already have the rights), `icacls` also grants and revokes permissions:
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Grant a user Full Control
+icacls "C:\path\to\file" /grant john:F
+
+# Grant Modify
+icacls "C:\path\to\file" /grant john:M
+
+# Remove a user's permissions
+icacls "C:\path\to\file" /remove john
+
+# Take ownership (requires SeTakeOwnership or admin)
+takeown /f "C:\path\to\file"
+
+# Reset permissions to inherited defaults
+icacls "C:\path\to\file" /reset
+```
+
+---
+
+## NTFS vs Share Permissions
+
+When accessing files over the network (SMB), **two** permission layers apply, and the most restrictive one wins:
+
+| Layer                 | Scope                    | Applies When                      |
+| --------------------- | ------------------------ | --------------------------------- |
+| **NTFS permissions**  | Local and network access | Always — controls the file itself |
+| **Share permissions** | Network access only      | Only when accessed over SMB       |
+
+So a folder might grant Everyone Full Control at the share level, but if NTFS only grants Read, you get Read. Conversely, generous NTFS permissions don't help over the network if the share permission is restrictive. This matters when you're enumerating SMB shares — covered on the [SMB & Network Shares](/tech/windows/smb-shares) page.
+
+---
+
+_Next: [Command Line: CMD, PowerShell & WMI](/tech/windows/command-line) — the interfaces you'll work through and how to get the most out of each._

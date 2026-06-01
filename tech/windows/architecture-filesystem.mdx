@@ -1,0 +1,147 @@
+## The Mindset
+
+The Windows file system isn't just trivia — it's a map. As a pentester you care about:
+
+- **Where can I write?** — `C:\ProgramData`, `C:\Temp`, user `AppData` — writable spots for payloads and hijacks
+- **Where do credentials hide?** — `AppData`, registry hives, config files
+- **Where does the OS keep its core files?** — `System32`, `WinSxS` — for DLL hijacking and binary replacement
+
+---
+
+## The Root Directory
+
+In Windows the root directory is a drive letter, usually `C:\` (the boot partition where the OS is installed). Other drives get other letters — `D:`, `E:`, and so on.
+
+The key directories on the boot partition:
+
+| Directory             | What's There                                                                                | Pentest Relevance                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `Program Files`       | 64-bit programs (on 64-bit systems)                                                         | Third-party software — check for weak permissions                     |
+| `Program Files (x86)` | 32-bit programs on 64-bit Windows                                                           | Same — often older, less-maintained apps                              |
+| `ProgramData`         | Hidden folder for app data, accessible by all users regardless of who's running the program | **Frequently writable — prime spot for payloads and script hijacks**  |
+| `Users`               | User profiles, plus `Public` and `Default`                                                  | Hunt here for credentials, SSH keys, history                          |
+| `Users\Public`        | Shared folder accessible to all users                                                       | Writable drop location                                                |
+| `Windows`             | The bulk of the OS files                                                                    | DLL hijacking, binary replacement targets                             |
+| `Windows\System32`    | Core DLLs and the Windows API                                                               | Searched automatically when a program loads a DLL without a full path |
+| `Windows\SysWOW64`    | 32-bit DLLs on 64-bit Windows                                                               | Same DLL-search relevance                                             |
+| `Windows\WinSxS`      | The Component Store — copies of all components, updates, service packs                      | Version artifacts                                                     |
+| `PerfLogs`            | Performance logs, empty by default                                                          | Occasionally a writable drop spot                                     |
+
+<Tip>
+  `C:\ProgramData` is the Windows equivalent of Linux's `/tmp` for an attacker —
+  it's hidden, accessible by every user, and frequently has loose permissions.
+  The scheduled-task script in the enumeration example lived here for exactly
+  this reason.
+</Tip>
+
+### AppData — Where User Secrets Live
+
+Each user profile has a hidden `AppData` folder with three subfolders:
+
+| Subfolder  | Contains                                                     | Pentest Relevance                                |
+| ---------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `Roaming`  | Machine-independent data that follows the user's profile     | Credentials, tokens, app configs, browser data   |
+| `Local`    | Machine-specific data, never synced across the network       | Browser databases, cached credentials, app state |
+| `LocalLow` | Like Local but lower integrity (e.g. browser protected mode) | Sandboxed app data                               |
+
+`AppData` is where applications stash saved passwords, session tokens, and config files — always worth digging through during pillaging.
+
+---
+
+## File Systems
+
+Windows supports several file systems. Three are relevant today: FAT32, exFAT, and NTFS. NTFS is the one that matters most for pentesting because it carries the permission model.
+
+| File System | Key Traits                                                                   | Pentest Relevance                        |
+| ----------- | ---------------------------------------------------------------------------- | ---------------------------------------- |
+| **FAT32**   | Old, max 4GB file size, no permissions, no encryption                        | Removable media — no ACLs to worry about |
+| **exFAT**   | Modern FAT replacement, no size limit, still no permissions                  | Removable media                          |
+| **NTFS**    | Default since Windows NT. Granular permissions, journaling, large partitions | **The permission model you'll attack**   |
+
+**Why NTFS matters to you:**
+
+- It enforces granular file and folder permissions (the ACLs you analyze with `icacls`)
+- It has journaling — file additions, modifications, and deletions are logged
+- Permissions inherit from parent folders by default, which is exactly how the writable-script misconfigs happen (a loose permission high up gets inherited all the way down)
+
+NTFS permissions are covered in depth on the [Permissions & icacls](/tech/windows/permissions-icacls) page.
+
+---
+
+## Exploring the File System — Command Line
+
+### `dir` — List Directory Contents
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List everything including hidden and system files
+dir c:\ /a
+
+# Hidden files only
+dir c:\ /a:h
+
+# Recursive search for a filename across the drive
+dir c:\ /s /b filename.txt
+
+# Search for a file pattern recursively
+dir c:\*.kdbx /s /b
+```
+
+The `/a` flag shows hidden and system entries you'd otherwise miss — including things like `$Recycle.Bin`, `pagefile.sys`, and hidden config folders.
+
+### `tree` — Visualize Directory Structure
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Show the folder structure of a directory
+tree "c:\Program Files (x86)\VMware"
+
+# Include files, page through one screen at a time
+tree c:\ /f | more
+```
+
+`tree` is useful for quickly understanding how an application or directory is laid out without clicking through it.
+
+### PowerShell Equivalents
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# List directory (ls / dir / gci are all aliases for Get-ChildItem)
+Get-ChildItem C:\Users
+
+# Recursive listing
+Get-ChildItem -Path C:\Users -Recurse
+
+# Find files by name across the system
+Get-ChildItem -Path C:\ -Recurse -Filter "*.kdbx" -ErrorAction SilentlyContinue
+
+# Show hidden files
+Get-ChildItem -Hidden C:\Users\bob
+```
+
+---
+
+## Hunting Interesting Locations
+
+A quick tour of where to look once you've got a shell:
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# User profile contents — desktop, documents, downloads
+Get-ChildItem C:\Users\*\Desktop\ -ErrorAction SilentlyContinue
+Get-ChildItem C:\Users\*\Documents\ -ErrorAction SilentlyContinue
+
+# Writable drop/hijack locations
+Get-ChildItem C:\ProgramData -Recurse -ErrorAction SilentlyContinue
+Get-ChildItem C:\Users\Public -Recurse -ErrorAction SilentlyContinue
+
+# AppData — where credentials and tokens hide
+Get-ChildItem C:\Users\*\AppData\Roaming -ErrorAction SilentlyContinue
+
+# Recently modified files (post-exploitation activity, fresh configs)
+Get-ChildItem C:\ -Recurse -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 20
+```
+
+<Tip>
+  The `-ErrorAction SilentlyContinue` flag is the PowerShell equivalent of Linux's `2>/dev/null` — it suppresses the access-denied errors that flood your output when recursing through directories you can't fully read.
+</Tip>
+
+---
+
+_Next: [NTFS Permissions & icacls](/tech/windows/permissions-icacls) — reading ACLs, spotting writable misconfigurations, and turning them into escalation._

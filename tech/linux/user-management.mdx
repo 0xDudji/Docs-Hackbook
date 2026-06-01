@@ -273,20 +273,4 @@ find /home /root -name ".pgpass" -o -name ".my.cnf" -o -name ".netrc" 2>/dev/nul
 
 ---
 
-## Quick Reference
-
-| Command                  | Purpose                      |
-| ------------------------ | ---------------------------- |
-| `cat /etc/passwd`        | All user accounts            |
-| `cat /etc/shadow`        | Password hashes (needs root) |
-| `cat /etc/group`         | Group memberships            |
-| `id`                     | Current user's full identity |
-| `sudo -l`                | Sudo rights for current user |
-| `who` / `w`              | Currently logged-in users    |
-| `last`                   | Login history                |
-| `su <user>`              | Switch to another user       |
-| `unshadow passwd shadow` | Prepare hashes for cracking  |
-
----
-
 _Next: [Process & Service Management](/tech/linux/processes-services) — enumerating running processes, services, and cron jobs to find attack surface._

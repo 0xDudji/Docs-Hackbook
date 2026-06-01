@@ -151,6 +151,7 @@
             "group": "Linux",
             "root": "tech/linux/index",
             "pages": [
+              "tech/linux/checklist",
               "tech/linux/system-enumeration",
               "tech/linux/user-management",
               "tech/linux/authentication-authorization",
@@ -164,6 +165,13 @@
               "tech/linux/security-hardening",
               "tech/linux/pillaging",
               "tech/linux/bash-scripting"
+            ]
+          },
+          {
+            "group": "Windows",
+            "root": "tech/windows/index",
+            "pages": [
+              "tech/windows/system-enumeration"
             ]
           }
         ]
