@@ -5,11 +5,76 @@ description: "Windows internals from an offensive security perspective."
 
 <Columns cols={2}>
   <Card
+    title="Checklist"
+    icon="list-check"
+    href="/tech/windows/checklist"
+  >
+    Step-by-step enumeration and pillaging checklist for every Windows box.
+  </Card>
+  <Card
     title="System Enumeration"
     icon="compass"
     href="/tech/windows/system-enumeration"
   >
-    Privileges, groups, OS version, scheduled tasks, and the first commands on
-    every Windows box.
+    Who you are, what privileges you hold, and the first commands on every Windows box.
+  </Card>
+  <Card
+    title="Architecture & Filesystem"
+    icon="folder"
+    href="/tech/windows/architecture-filesystem"
+  >
+    Key directories, writable paths, and the filesystem layout that shapes every attack.
+  </Card>
+  <Card
+    title="Permissions & ACLs"
+    icon="shield-check"
+    href="/tech/windows/permissions-icacls"
+  >
+    ACLs, icacls, and finding misconfigurations that lead to privilege escalation.
+  </Card>
+  <Card
+    title="Command Line"
+    icon="terminal"
+    href="/tech/windows/command-line"
+  >
+    CMD, PowerShell, and the shell techniques you need from first access onward.
+  </Card>
+  <Card
+    title="Processes & Services"
+    icon="server"
+    href="/tech/windows/processes-services"
+  >
+    Running processes, services, scheduled tasks, and their attack surface.
+  </Card>
+  <Card
+    title="Remote Access"
+    icon="network-wired"
+    href="/tech/windows/remote-access"
+  >
+    RDP, WinRM, SMB, and PsExec for moving to and between Windows hosts.
+  </Card>
+  <Card
+    title="SMB & Shares"
+    icon="share-nodes"
+    href="/tech/windows/smb-shares"
+  >
+    Enumerate and access SMB shares for credentials, configs, and sensitive files.
+  </Card>
+  <Card
+    title="Registry"
+    icon="database"
+    href="/tech/windows/registry"
+  >
+    Persistence keys, credential storage, and config secrets hidden in the registry.
+  </Card>
+  <Card
+    title="Security Mechanisms"
+    icon="shield-exclamation"
+    href="/tech/windows/security-mechanisms"
+  >
+    Defender, AppLocker, UAC, and the defenses that shape your approach.
+  </Card>
+  <Card title="Pillaging" icon="shield" href="/tech/windows/pillaging">
+    Extract credentials, secrets, and sensitive data once you have access.
   </Card>
 </Columns>

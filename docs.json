@@ -171,7 +171,17 @@
             "group": "Windows",
             "root": "tech/windows/index",
             "pages": [
-              "tech/windows/system-enumeration"
+              "tech/windows/checklist",
+              "tech/windows/system-enumeration",
+              "tech/windows/architecture-filesystem",
+              "tech/windows/permissions-icacls",
+              "tech/windows/command-line",
+              "tech/windows/processes-services",
+              "tech/windows/remote-access",
+              "tech/windows/smb-shares",
+              "tech/windows/registry",
+              "tech/windows/security-mechanisms",
+              "tech/windows/pillaging"
             ]
           }
         ]
