@@ -1,0 +1,158 @@
+# SNMP
+
+> SNMP exists to monitor and configure network devices — which means a device that speaks it will happily read out its own configuration, running processes, installed software, and sometimes credentials, to anyone who knows the community string. And that string is often just "public".
+
+<Note>**Protocol:** UDP · **Ports:** 161 (queries) · 162 (traps)</Note>
+
+---
+
+## What Is SNMP?
+
+**Simple Network Management Protocol** was built to monitor and remotely configure network devices — routers, switches, servers, printers, IoT devices, and more.
+
+It works in two directions:
+
+- **Queries (UDP 161):** the client actively requests information from a device's SNMP agent, and can also set values to change options and settings. The client always initiates.
+- **Traps (UDP 162):** data packets the SNMP server sends to the client _unprompted_ — when a configured event occurs on the device, it fires a trap to notify the client.
+
+### OID & MIB
+
+SNMP organizes everything into a giant hierarchical tree.
+
+An **OID (Object Identifier)** is a node in that tree, identified by a dotted sequence of integers (e.g. `1.3.6.1.2.1.1.1.0`). The longer the chain, the more specific the information. Many nodes contain nothing but references to the nodes below them. You can look OIDs up in the [Object Identifier Registry](https://www.alvestrand.no/objectid/).
+
+A **MIB (Management Information Base)** is a text file that makes those OIDs human-readable. It lists a device's queryable objects in a standardized tree, and for each OID gives a name, type, access rights, and description. MIBs are written in ASN.1-based ASCII. They don't contain data themselves — they explain _where_ to find which information, what type it is, and what it looks like. In short: **the MIB translates the OID into something a human can understand.**
+
+### Community Strings
+
+Community strings act as **passwords** — they determine whether requested information can be viewed. The catch is that in the older, still-common versions, they're transmitted in plain text.
+
+Many organizations still run **SNMPv2** because migrating to v3 is complex, even though the services need to stay up.
+
+| Version     | Authentication        | Encryption                                 | Notes                                                              |
+| ----------- | --------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
+| **SNMPv1**  | None                  | None — plain text                          | First version. Anyone on the network can read and modify data      |
+| **SNMPv2c** | Community string only | None — community string sent in plain text | The "c" = community-based. Security on par with v1, more functions |
+| **SNMPv3**  | Username + password   | Yes (pre-shared key)                       | Far more secure, far more complex to configure                     |
+
+<Tip>
+  SNMPv1 and v2c are the ones you exploit — no encryption and a single community
+  string standing between you and the device's full configuration. Default
+  strings like `public` (read) and `private` (read-write) are tried constantly
+  because administrators so often leave them in place.
+</Tip>
+
+---
+
+## Default Configuration
+
+The SNMP daemon's config (`/etc/snmp/snmpd.conf`) defines the basics: listening IPs and ports, the MIB/OIDs exposed, authentication, and the community strings.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/snmp/snmpd.conf
+sysLocation    Datacenter-1
+sysContact     admin@inlanefreight.htb
+rocommunity    public   default
+rwcommunity    private  10.129.14.0/24
+```
+
+---
+
+## Dangerous Settings
+
+A handful of `snmpd.conf` directives hand over far too much:
+
+| Setting                        | Risk                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------ |
+| `rwuser noauth`                | Grants access to the **full OID tree without any authentication**              |
+| `rwcommunity <string> <IPv4>`  | Read-write access to the full OID tree, regardless of where requests originate |
+| `rwcommunity6 <string> <IPv6>` | Same as above, over IPv6                                                       |
+
+<Tip>
+  `rwuser noauth` and a wide-open `rwcommunity` are the dangerous ones — they
+  grant **read-write** access to the entire device with no real restriction.
+  Read access leaks config; write access lets you *change* it.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+Three tools cover SNMP footprinting:
+
+- **snmpwalk** — query the OIDs and read their information
+- **onesixtyone** — brute-force community string _names_ (since admins name them arbitrarily)
+- **braa** — once you have a string, brute-force individual OIDs to enumerate fast
+
+### snmpwalk — Read the OID Tree
+
+With a known community string against a no-auth version (1 or 2c), `snmpwalk` dumps the device's information:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+snmpwalk -v2c -c public 10.129.14.128
+```
+
+```
+iso.3.6.1.2.1.1.1.0 = STRING: "Linux inlanefreight 5.4.0-80-generic"
+iso.3.6.1.2.1.1.4.0 = STRING: "admin@inlanefreight.htb"
+iso.3.6.1.2.1.1.5.0 = STRING: "inlanefreight.htb"
+iso.3.6.1.2.1.1.6.0 = STRING: "Datacenter-1"
+iso.3.6.1.2.1.25.6.3.1.2.1 = STRING: "python3-pip"
+iso.3.6.1.2.1.25.4.2.1.2.1 = STRING: "/usr/bin/python3 /usr/local/bin/app.py --db-pass=Sup3rS3cr3t"
+```
+
+That kind of output — system version, contact, installed packages, and **process command lines that include passwords** — is exactly what a misconfigured SNMP service leaks.
+
+### onesixtyone — Brute-Force Community Strings
+
+If you don't know the community string, brute-force it with `onesixtyone` and a SecLists wordlist:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+onesixtyone -c /opt/useful/SecLists/Discovery/SNMP/snmp.txt 10.129.14.128
+```
+
+```
+Scanning 1 hosts, 3220 communities
+10.129.14.128 [public] Linux inlanefreight 5.4.0-80-generic
+10.129.14.128 [private] Linux inlanefreight 5.4.0-80-generic
+```
+
+Community strings bound to specific IPs are often named after the host, sometimes with symbols added to obscure them. In a large network of 100+ SNMP-managed servers, those labels tend to follow a **pattern** — so you can generate guesses with a tool like `crunch` to build custom wordlists.
+
+### braa — Brute-Force OIDs
+
+Once you have a working community string, `braa` enumerates many OIDs quickly:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+braa public@10.129.14.128:.1.3.6.*
+```
+
+```
+10.129.14.128:20ms:.1.3.6.1.2.1.1.1.0:Linux inlanefreight 5.4.0-80-generic
+10.129.14.128:20ms:.1.3.6.1.2.1.1.5.0:inlanefreight.htb
+10.129.14.128:20ms:.1.3.6.1.2.1.25.4.2.1.2.1:/usr/bin/python3 app.py --db-pass=...
+```
+
+<Note>
+  Configuring SNMP yourself teaches more than any tutorial — the behavior varies
+  a lot between setups. Spinning up a VM with snmpd and experimenting with
+  different community-string and access configurations is the best way to build
+  intuition for what you'll find in the field.
+</Note>
+
+---
+
+## Quick Reference
+
+| Command                                | Purpose                              |
+| -------------------------------------- | ------------------------------------ |
+| `snmpwalk -v2c -c <string> <ip>`       | Walk the full OID tree               |
+| `snmpwalk -v2c -c <string> <ip> <OID>` | Query a specific OID                 |
+| `onesixtyone -c <wordlist> <ip>`       | Brute-force community strings        |
+| `braa <string>@<ip>:.1.3.6.*`          | Brute-force OIDs with a known string |
+
+**The footprinting flow:** try default strings (`public`, `private`) with snmpwalk → brute-force the string with onesixtyone if unknown → walk the tree for system info, processes, and credentials → use braa for fast OID enumeration once you're in.
+
+---
+
+_Next: [SSH](/tech/services/ssh) — banner grabbing, authentication methods, and key-based access._

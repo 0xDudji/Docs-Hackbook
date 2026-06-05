@@ -1,0 +1,186 @@
+# SMTP
+
+> SMTP is how mail moves across the internet — and a chatty or misconfigured mail server will confirm valid usernames for you and, at its worst, relay spoofed mail for anyone who asks. VRFY enumeration and open-relay testing are the two things you check every time.
+
+<Note>
+  **Protocol:** TCP · **Port:** 25 (and 587 for submission, 465 for SMTPS)
+</Note>
+
+---
+
+## What Is SMTP?
+
+The **Simple Mail Transfer Protocol (SMTP)** sends email across an IP network. It's usually paired with **IMAP** or **POP3**, which handle _fetching_ mail, while SMTP handles _sending_. Once an email is transmitted the connection closes, and the server forwards it on toward its destination.
+
+By default SMTP is **unencrypted** — commands, data, and authentication all travel in plain text — so it's typically wrapped in **SSL/TLS**. To fight spam, modern servers use **ESMTP** with **SMTP-Auth**, so only authorized users can send. When people say "SMTP" today, they usually mean ESMTP.
+
+### How Mail Flows
+
+The journey of a message touches several agents:
+
+1. The client (**MUA — Mail User Agent**) splits the email into a header and body and hands it to the SMTP server.
+2. The server's **MTA (Mail Transfer Agent)** checks the mail for size and spam, then stores it.
+3. An optional **MSA (Mail Submission Agent)**, also called a **relay server**, validates the email's origin to relieve the MTA.
+4. The MTA looks up the recipient mail server's IP in **DNS**.
+5. At the destination, the packets are reassembled and the **MDA (Mail Delivery Agent)** drops the message in the recipient's mailbox.
+
+**Open relays** — servers that forward mail for anyone — are abused to send spam en masse with forged sender addresses (mail spoofing). Defenses like **DKIM** (DomainKeys Identified Mail) and **SPF** (Sender Policy Framework) exist to reject or quarantine suspicious mail.
+
+---
+
+## Default Configuration
+
+A common Linux MTA is **Postfix**, configured in `/etc/postfix/main.cf`. SMTP is driven by a small set of commands that tell the server what to do:
+
+| Command         | Purpose                                                                |
+| --------------- | ---------------------------------------------------------------------- |
+| `HELO` / `EHLO` | Open the session and identify the client (`EHLO` is the ESMTP version) |
+| `MAIL FROM:`    | Specify the sender                                                     |
+| `RCPT TO:`      | Specify the recipient                                                  |
+| `DATA`          | Begin the message body (ends with a lone `.`)                          |
+| `VRFY`          | Verify whether a user exists                                           |
+| `EXPN`          | Expand a mailing list to its members                                   |
+| `RSET`          | Reset the session                                                      |
+| `QUIT`          | Close the connection                                                   |
+
+---
+
+## Dangerous Settings
+
+To get past spam filters, a sender can route mail through a **relay server** that recipients trust — a known, verified SMTP server. Normally the sender must authenticate to the relay first.
+
+The problem: administrators often don't know which IP ranges they need to permit, so to avoid breaking mail flow they permit **all** of them. That's the open-relay misconfiguration you'll find on both external and internal tests.
+
+### Open Relay Configuration
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/postfix/main.cf
+mynetworks = 0.0.0.0/0
+```
+
+<Tip>
+  `mynetworks = 0.0.0.0/0` turns the server into an open relay — it'll send mail
+  on behalf of anyone, from any address. That enables mass spam, but for a
+  pentester the real value is **spoofing**: sending convincing internal email
+  (phishing) and, in some setups, intercepting or reading mail.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### Nmap — Commands and Open-Relay Test
+
+The default `smtp-commands` script uses `EHLO` to list everything the server supports:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -p25 --script smtp-commands 10.129.14.128
+```
+
+```
+PORT   STATE SERVICE
+25/tcp open  smtp
+| smtp-commands: mail.inlanefreight.htb, PIPELINING, SIZE 10240000,
+|_VRFY, ETRN, STARTTLS, ENHANCEDSTATUSCODES, 8BITMIME, DSN
+```
+
+The `smtp-open-relay` script runs 16 different tests to determine whether the server is an open relay. Add `-v` to see which tests run:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -p25 --script smtp-open-relay -v 10.129.14.128
+```
+
+```
+| smtp-open-relay: Server is an open relay (16/16 tests)
+```
+
+### Telnet — Interact Directly
+
+Use `telnet` to open a raw TCP session and drive the server by hand. Start with `HELO`/`EHLO`:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+telnet 10.129.14.128 25
+```
+
+```
+220 mail.inlanefreight.htb ESMTP Postfix (Ubuntu)
+EHLO inlanefreight.htb
+250-mail.inlanefreight.htb
+250-PIPELINING
+250-SIZE 10240000
+250-VRFY
+250-ETRN
+250 8BITMIME
+```
+
+### Enumerate Users with VRFY
+
+`VRFY` asks the server whether a user exists. It doesn't always work, but when it does it's a free username oracle:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+VRFY root
+```
+
+```
+252 2.0.0 root
+VRFY nonexistent
+550 5.1.1 <nonexistent>: Recipient address rejected: User unknown
+```
+
+<Note>
+  Depending on configuration, some servers return **code 252** for *every*
+  address — confirming users that don't actually exist. Treat 252-for-everything
+  as "VRFY enumeration is unreliable here." A full list of SMTP response codes
+  is at [serversmtp.com](https://serversmtp.com/smtp-error/).
+</Note>
+
+### smtp-user-enum — Brute-Force Usernames
+
+When `VRFY` is enabled, `smtp-user-enum` will run a wordlist through it:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+smtp-user-enum -M VRFY -U users.txt -t 10.129.14.128 -v
+```
+
+If results are flaky, increase the wait time between requests:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+smtp-user-enum -M VRFY -U users.txt -t 10.129.14.128 -v -w 15
+```
+
+The `-M` mode can also be `EXPN` or `RCPT` if `VRFY` is disabled — those verbs sometimes leak users when `VRFY` doesn't.
+
+### Metasploit — Enumerate Users
+
+The Metasploit auxiliary module does the same job and sometimes gets better results:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+msfconsole
+use auxiliary/scanner/smtp/smtp_enum
+set RHOSTS 10.129.14.128
+set USER_FILE users.txt
+run
+```
+
+```
+[+] 10.129.14.128:25 - Users found: admin, mailadmin, root, sysadmin
+```
+
+---
+
+## Quick Reference
+
+| Command                                        | Purpose                         |
+| ---------------------------------------------- | ------------------------------- |
+| `nmap -p25 --script smtp-commands <ip>`        | List supported SMTP commands    |
+| `nmap -p25 --script smtp-open-relay -v <ip>`   | Test for open relay (16 checks) |
+| `telnet <ip> 25` → `EHLO`                      | Manual interaction              |
+| `VRFY <user>`                                  | Check if a user exists          |
+| `smtp-user-enum -M VRFY -U <wordlist> -t <ip>` | Brute-force usernames           |
+| `auxiliary/scanner/smtp/smtp_enum`             | Metasploit user enumeration     |
+
+**The footprinting flow:** nmap for supported commands → open-relay test → telnet in and try VRFY → automate with smtp-user-enum (fall back to EXPN/RCPT if VRFY is off) → confirm with Metasploit.
+
+---
+
+_Next: [IMAP / POP3](/tech/services/imap-pop3) — reading mailboxes and hunting credentials in mail stores._

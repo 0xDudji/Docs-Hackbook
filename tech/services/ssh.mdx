@@ -1,0 +1,137 @@
+# SSH
+
+> SSH is the most secure protocol you'll routinely meet — which is exactly why a foothold here matters. You rarely break SSH itself; you break in _through_ it, with credentials you found elsewhere, a key left lying around, or password auth left enabled for brute-forcing.
+
+<Note>**Protocol:** TCP · **Port:** 22</Note>
+
+---
+
+## What Is SSH?
+
+**Secure Shell (SSH)** lets two computers establish an encrypted, direct connection over an otherwise insecure network, on the standard **TCP port 22**. It's primarily a Linux/Unix tool but runs on Windows too with the right software.
+
+**SSH-2** (version 2) is the protocol you want to see — more advanced than SSH-1 in encryption, speed, stability, and security. SSH-1 is vulnerable to man-in-the-middle attacks; SSH-2 is not. The banner tells you which versions a server accepts (more on that below).
+
+OpenSSH supports six authentication methods:
+
+1. Password authentication
+2. Public-key authentication
+3. Host-based authentication
+4. Keyboard-interactive authentication
+5. Challenge-response authentication
+6. GSSAPI authentication
+
+Which methods are enabled shapes your approach — password auth means brute-forcing is on the table; public-key-only means you need to find a key.
+
+---
+
+## Default Configuration
+
+The OpenSSH server is governed by `sshd_config`, which ships with only a handful of settings configured by default. Notably, the default config enables **X11 forwarding** — which contained a command injection vulnerability in OpenSSH **7.2p1** back in 2016.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/ssh/sshd_config (relevant defaults)
+Port 22
+PermitRootLogin prohibit-password
+PasswordAuthentication yes
+X11Forwarding yes
+```
+
+---
+
+## Dangerous Settings
+
+SSH is one of the most secure protocols available, but misconfigurations still open it up:
+
+| Setting                      | Risk                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `PasswordAuthentication yes` | Enables brute-forcing a known username for its password                        |
+| `PermitRootLogin yes`        | Lets you target `root` directly — brute-force or stolen creds land you as root |
+| `PermitEmptyPasswords yes`   | Accounts with blank passwords become trivial logins                            |
+| `AllowTcpForwarding yes`     | Enables port forwarding / pivoting through the host                            |
+
+<Tip>
+  `PasswordAuthentication yes` is the setting that makes SSH brute-forceable.
+  Combined with `PermitRootLogin yes`, it means a successful guess against
+  `root` hands you the whole box. When key-only auth is enforced instead,
+  brute-forcing is off the table and you need to find a private key elsewhere on
+  the engagement.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### ssh-audit — Fingerprint the Server
+
+`ssh-audit` checks both client- and server-side configuration and reports the version, supported authentication methods, and which encryption algorithms are in use — any of which can be attacked at the crypto level later:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+./ssh-audit.py 10.129.14.128
+```
+
+```
+# general
+(gen) banner: SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.3
+(gen) software: OpenSSH 8.2p1
+(gen) compatibility: OpenSSH 7.4+, Dropbear SSH 2018.76+
+
+# key exchange algorithms
+(kex) curve25519-sha256                  -- [info] available since OpenSSH 7.4
+(kex) diffie-hellman-group14-sha1        -- [fail] using weak hashing algorithm
+
+# authentication methods
+(aut) password, publickey
+```
+
+The first lines reveal the **banner**, which discloses the OpenSSH version. Older versions carried vulnerabilities like **CVE-2020-14145**, which allowed an attacker to man-in-the-middle the initial connection attempt.
+
+### Reading the Banner
+
+You'll meet various banners during a test. By default the banner shows the **protocol version** the server accepts, then the **server version**:
+
+| Banner                   | Meaning                                          |
+| ------------------------ | ------------------------------------------------ |
+| `SSH-1.99-OpenSSH_3.9p1` | Accepts **both** SSH-1 and SSH-2 · OpenSSH 3.9p1 |
+| `SSH-2.0-OpenSSH_8.2p1`  | Accepts **SSH-2 only** · OpenSSH 8.2p1           |
+
+A `1.99` protocol version is itself a finding — it means the server still accepts the insecure SSH-1.
+
+### See Supported Auth Methods
+
+The verbose connection output reveals which authentication methods the server offers:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ssh -v user@10.129.14.128
+```
+
+```
+debug1: Authentications that can continue: publickey,password
+```
+
+### Specify the Authentication Method
+
+For brute-force attempts, force a specific method with the `PreferredAuthentications` option — this keeps the client from cycling through other methods first:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ssh -o PreferredAuthentications=password user@10.129.14.128
+```
+
+---
+
+## Quick Reference
+
+| Command                                              | Purpose                                   |
+| ---------------------------------------------------- | ----------------------------------------- |
+| `ssh-audit.py <ip>`                                  | Fingerprint version, auth methods, crypto |
+| `ssh -v user@<ip>`                                   | View supported authentication methods     |
+| `ssh -o PreferredAuthentications=password user@<ip>` | Force password auth (for brute-forcing)   |
+| `nc <ip> 22`                                         | Grab the banner manually                  |
+
+**Banner reading:** `SSH-<protocol>-<server>`. A `1.99` protocol version accepts insecure SSH-1; `2.0` is SSH-2 only.
+
+**The footprinting flow:** grab the banner for version/protocol → ssh-audit for auth methods and weak crypto → check for password auth → brute-force a known user, or hunt for a private key if key-only.
+
+---
+
+_Next: [RDP](/tech/services/rdp) — Windows remote desktop, NLA, and credential-based access._

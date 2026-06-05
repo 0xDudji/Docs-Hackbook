@@ -1,0 +1,109 @@
+# RSYNC
+
+> Rsync exists to copy files efficiently — and when it's exposed on a network with no authentication, it'll happily list its shared folders and let you pull everything down, SSH keys included. Even when it needs credentials, found passwords are worth trying for reuse.
+
+<Note>**Protocol:** TCP · **Port:** 873</Note>
+
+---
+
+## What Is Rsync?
+
+**Rsync** is a fast, efficient tool for copying files — locally or to/from remote hosts. It's best known for its **delta-transfer algorithm**, which only sends the _differences_ between the source files and any older version already on the destination, minimizing data over the network. It identifies what to transfer by looking at files that changed in size or last-modified time.
+
+That efficiency makes it a favourite for **backups and mirroring** — which is exactly why the shares it exposes so often contain sensitive data.
+
+By default rsync runs on **TCP port 873**, and it can be configured to ride over **SSH** for secure transfers, piggybacking on an existing SSH connection.
+
+The two scenarios you'll meet:
+
+- **No authentication** — you can list shared folders and retrieve files directly. Common, and the quickest win.
+- **Authentication required** — you need credentials. If you've recovered passwords elsewhere on the engagement, **always test them here for reuse** — a successful login can pull down files that hand you remote access.
+
+---
+
+## Footprinting the Service
+
+### Scanning for Rsync
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -p873 10.129.14.128
+```
+
+```
+PORT    STATE SERVICE VERSION
+873/tcp open  rsync   (protocol version 31)
+```
+
+### Probing for Accessible Shares
+
+Connect with the rsync client and list available modules (shares) — no path, just the host:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rsync -av --list-only rsync://10.129.14.128
+```
+
+```
+dev             Dev Folder
+```
+
+### Enumerating an Open Share
+
+List the contents of a share you found — here, `dev`:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rsync -av --list-only rsync://10.129.14.128/dev
+```
+
+```
+drwxr-xr-x          4,096 2024/06/25 12:00:00 .
+-rw-r--r--            402 2024/06/25 12:00:00 backup.sh
+-rw-r--r--          1,872 2024/06/25 12:00:00 users.txt
+drwx------          4,096 2024/06/25 12:00:00 .ssh
+```
+
+A directory like `.ssh` accessible in a share is a flag — it likely holds SSH keys worth pulling down.
+
+### Syncing Files to Your Machine
+
+Pull the whole share down to inspect locally:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rsync -av rsync://10.129.14.128/dev ./dev-loot
+```
+
+### Rsync Over SSH
+
+If rsync is configured to transfer over SSH, add the `-e ssh` flag — or specify a non-standard SSH port:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Rsync over SSH
+rsync -av -e ssh rsync://user@10.129.14.128/dev ./dev-loot
+
+# Non-standard SSH port
+rsync -av -e "ssh -p2222" user@10.129.14.128:/path ./dev-loot
+```
+
+<Tip>
+  An unauthenticated rsync share with a `.ssh` directory is a fast path to
+  access — pull the private key, and you can SSH straight in as its owner. And
+  whenever rsync needs credentials, try any passwords you've already found:
+  rsync is a classic password-reuse target.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Command                                      | Purpose                           |
+| -------------------------------------------- | --------------------------------- |
+| `nmap -sV -p873 <ip>`                        | Detect rsync and protocol version |
+| `rsync -av --list-only rsync://<ip>`         | List available shares (modules)   |
+| `rsync -av --list-only rsync://<ip>/<share>` | Enumerate a share's contents      |
+| `rsync -av rsync://<ip>/<share> ./loot`      | Sync a share to your machine      |
+| `rsync -av -e ssh user@<ip>:/path ./loot`    | Transfer over SSH                 |
+
+**The footprinting flow:** nmap for port 873 → list modules (no auth first) → enumerate each share → sync interesting files (watch for `.ssh`) → fall back to credentials/SSH mode, testing for password reuse.
+
+---
+
+_Next: [R-Services](/tech/services/r-services) — the legacy trust-based remote access suite and `.rhosts` abuse._

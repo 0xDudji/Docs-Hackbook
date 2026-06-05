@@ -1,0 +1,289 @@
+# SMB
+
+> SMB is the protocol behind Windows file and printer sharing — and Samba is its Linux counterpart. A misconfigured share or an anonymous RPC session can leak shares, users, and domain info before you've authenticated to anything, handing you the names you need to brute-force your way in.
+
+<Note>
+  **Protocol:** TCP · **Port:** 445 (CIFS) · legacy NetBIOS on 137/138/139
+</Note>
+
+---
+
+## What Is SMB?
+
+**Server Message Block (SMB)** is a client-server protocol that governs access to files, directories, and other network resources like printers and routers. A client uses it to access files or services shared on the network by an SMB server.
+
+Before any of that happens, both parties establish a connection — over IP networks SMB rides on **TCP**, using the three-way handshake before the session is set up.
+
+An SMB server can expose arbitrary parts of its local file system as **shares**. The hierarchy a client sees is therefore partly independent of the server's real structure, and access is governed by **Access Control Lists (ACLs)**.
+
+### Samba and CIFS
+
+**Samba** is the open-source SMB implementation for Linux. It implements **CIFS** (Common Internet File System), which is a specific "dialect" of SMB created by Microsoft — so Samba can talk to modern Windows systems. That's why you'll often see it written as **SMB/CIFS**.
+
+The ports tell you which generation you're dealing with:
+
+| Ports                       | Protocol                                      |
+| --------------------------- | --------------------------------------------- |
+| **137, 138, 139** (TCP/UDP) | Legacy NetBIOS — older SMB over NetBIOS       |
+| **445** (TCP)               | CIFS — modern SMB, the one you'll target most |
+
+---
+
+## Default Configuration
+
+Samba is configured through `/etc/samba/smb.conf`. Filtered down, it has **global settings** (the server-wide configuration applied to all shares) and individual **share** definitions. Crucially, a share can **override** the global settings — and that's exactly where misconfigurations creep in.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/samba/smb.conf
+[global]
+   workgroup = DEV.INFREIGHT.HTB
+   server string = DEVSM
+   log file = /var/log/samba/log.%m
+   max log size = 1000
+   server role = standalone server
+   map to guest = bad user
+   usershare allow guests = yes
+
+[printers]
+   comment = All Printers
+   browseable = no
+   path = /var/spool/samba
+   printable = yes
+   guest ok = no
+
+[print$]
+   comment = Printer Drivers
+   path = /var/lib/samba/printers
+```
+
+---
+
+## Dangerous Settings
+
+Some Samba settings expose far more than the administrator intends. Ask, for each one: _what convenience does it give an employee — and what does it hand an attacker who gets in?_
+
+| Setting                             | Effect                                     | Risk                                                            |
+| ----------------------------------- | ------------------------------------------ | --------------------------------------------------------------- |
+| `browseable = yes`                  | Lets clients list available shares/folders | An attacker who gains access can browse the whole structure too |
+| `read only = no` / `writable = yes` | Allows writing to the share                | Attacker can drop payloads or modify files                      |
+| `guest ok = yes`                    | Allows access without credentials          | Anonymous access to share contents                              |
+| `map to guest = bad user`           | Maps failed logins to the guest account    | Turns any bad login into anonymous access                       |
+| `create mask` / `directory mask`    | Permissions on new files                   | Loose masks create world-readable/writable files                |
+
+<Tip>
+  `browseable = yes` combined with `guest ok = yes` is the classic leak — anyone
+  can connect anonymously and enumerate every share and its contents. Add a
+  writable share and it becomes a payload drop.
+</Tip>
+
+A test share to see how these settings affect enumeration might look like:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+[notes]
+   comment = CheckIT
+   path = /mnt/notes/
+   browseable = yes
+   read only = no
+   writable = yes
+   guest ok = yes
+```
+
+After editing `smb.conf`, the service has to be restarted (`systemctl restart smbd`) for changes to take effect. Administrators can review active connections with `smbstatus`, which shows the Samba version plus who is connected, from which host, and to which share.
+
+---
+
+## Footprinting the Service
+
+Nmap has plenty of SMB NSE scripts, but they can be slow and shallow — manual interaction usually surfaces far more. Start with a scan to confirm the service, then go manual.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -sC -p139,445 10.129.14.128
+```
+
+```
+PORT    STATE SERVICE     VERSION
+139/tcp open  netbios-ssn Samba smbd 4.6.2
+445/tcp open  netbios-ssn Samba smbd 4.6.2
+Service Info: Host: DEVSM
+```
+
+### smbclient — Listing and Connecting to Shares
+
+List the shares (a null/anonymous session needs no credentials):
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+smbclient -N -L //10.129.14.128
+```
+
+```
+        Sharename       Type      Comment
+        ---------       ----      -------
+        print$          Disk      Printer Drivers
+        home            Disk      INFREIGHT Samba
+        dev             Disk      DEVenv
+        notes           Disk      CheckIT
+        IPC$            IPC       IPC Service (DEVSM)
+```
+
+Connect to a share and browse it:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+smbclient //10.129.14.128/notes
+```
+
+```
+Enter WORKGROUP\user's password:
+smb: \> ls
+  .                  D    0  Tue Jun 25 12:21:43 2024
+  ..                 D    0  Tue Jun 25 12:21:43 2024
+  prep-prod.txt      N  402  Tue Jun 25 12:21:43 2024
+smb: \> get prep-prod.txt
+```
+
+Use `get` to download interesting files. smbclient also lets you run **local** system commands with a leading `!` without dropping the connection:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+smb: \> !ls -la
+```
+
+---
+
+## RPC Enumeration
+
+When a share alone isn't enough, **rpcclient** lets you perform MS-RPC functions against the server — passing parameters and reading back values. This is where anonymous access really leaks information.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rpcclient -U "" -N 10.129.14.128
+```
+
+Useful rpcclient queries:
+
+| Command                   | Purpose                       |
+| ------------------------- | ----------------------------- |
+| `srvinfo`                 | Server information            |
+| `enumdomains`             | Enumerate deployed domains    |
+| `querydominfo`            | Domain, server, and user info |
+| `netshareenumall`         | Enumerate all shares          |
+| `netsharegetinfo <share>` | Info about a specific share   |
+| `enumdomusers`            | Enumerate all domain users    |
+| `queryuser <RID>`         | Info about a specific user    |
+
+A typical anonymous enumeration session:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rpcclient $> enumdomusers
+user:[mrb3n] rid:[0x3e8]
+user:[cry0l1t3] rid:[0x3e9]
+
+rpcclient $> queryuser 0x3e9
+        User Name   :   cry0l1t3
+        Full Name   :   Cry0l1t3
+        Home Drive  :   \\dev\cry0l1t3
+        Profile Path:   \\dev\cry0l1t3\profile
+```
+
+<Tip>
+  Anonymous RPC access is dangerous because of what it reveals — once it
+  discloses **usernames**, those become targets for password brute-forcing. One
+  over-permissive setting can put the whole network at risk.
+</Tip>
+
+### RID Brute-Forcing
+
+Sometimes most commands are blocked, but `queryuser <RID>` still works by RID. You can brute-force the RID range to pull user info anyway. A Bash loop over rpcclient does the job:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+for i in $(seq 500 1100); do
+  rpcclient -N -U "" 10.129.14.128 \
+    -c "queryuser 0x$(printf '%x\n' $i)" \
+    | grep "User Name\|user_rid\|group_rid" && echo ""
+done
+```
+
+Use the results to identify a **group's RID**, then query the whole group.
+
+### Impacket samrdump.py
+
+The same user enumeration is available through Impacket's `samrdump.py`:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+samrdump.py 10.129.14.128
+```
+
+```
+[*] Retrieving endpoint list from 10.129.14.128
+[*] Looking up users in domain DEVSM
+Found user: mrb3n, uid = 1000
+Found user: cry0l1t3, uid = 1001
+```
+
+---
+
+## Automated SMB Enumeration
+
+Several tools wrap up the queries above.
+
+### smbmap & netexec
+
+`smbmap` shows shares and your access level on each; `netexec` (the successor to crackmapexec) does the same fast and across whole subnets:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# smbmap — shares and permissions
+smbmap -H 10.129.14.128
+
+# netexec — shares, version, signing
+netexec smb 10.129.14.128 --shares
+netexec smb 10.129.14.128 -u '' -p '' --shares   # null session
+```
+
+```
+Disk          Permissions     Comment
+----          -----------     -------
+print$        NO ACCESS       Printer Drivers
+home          NO ACCESS       INFREIGHT Samba
+dev           READ ONLY       DEVenv
+notes         READ, WRITE     CheckIT
+IPC$          NO ACCESS       IPC Service
+```
+
+### enum4linux-ng
+
+`enum4linux-ng` (a rewrite of the older enum4linux) automates a large portion of these queries in one shot — shares, users, groups, OS info, and password policy:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+enum4linux-ng -A 10.129.14.128
+```
+
+```
+ =====================( Users on 10.129.14.128 )=====================
+[+] Found 3 users:
+  mrb3n   (RID 1000)
+  cry0l1t3 (RID 1001)
+  sjten   (RID 1002)
+
+ ==================( Shares on 10.129.14.128 )==================
+  notes   - READ/WRITE
+  dev     - READ
+```
+
+---
+
+## Quick Reference
+
+| Command                            | Purpose                          |
+| ---------------------------------- | -------------------------------- |
+| `nmap -sV -sC -p139,445 <ip>`      | Confirm service and version      |
+| `smbclient -N -L //<ip>`           | List shares (null session)       |
+| `smbclient //<ip>/<share>`         | Connect to and browse a share    |
+| `rpcclient -U "" -N <ip>`          | Anonymous RPC session            |
+| `enumdomusers` / `queryuser <RID>` | Enumerate users via RPC          |
+| `samrdump.py <ip>`                 | Impacket user enumeration        |
+| `smbmap -H <ip>`                   | Shares + permission levels       |
+| `netexec smb <ip> --shares`        | Fast share enumeration           |
+| `enum4linux-ng -A <ip>`            | All-in-one automated enumeration |
+
+**The footprinting flow:** nmap to confirm → smbclient to list/browse shares → rpcclient for users and domain info → RID brute-force if locked down → enum4linux-ng / netexec to automate and confirm.
+
+---
+
+_Next: [SMTP](/tech/services/smtp) — user enumeration via VRFY/EXPN and open-relay testing._

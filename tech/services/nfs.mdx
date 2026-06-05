@@ -1,0 +1,157 @@
+# NFS
+
+> NFS is the Unix world's file sharing — and because it pushes authentication onto RPC and trusts the client's UID, a misconfigured export lets you mount a share, impersonate whatever user owns the files, and read or modify them at will. The `no_root_squash` option turns that into a clean privilege escalation.
+
+<Note>
+  **Protocol:** TCP/UDP · **Ports:** 2049 (NFS) · 111 (RPC portmapper)
+</Note>
+
+---
+
+## What Is NFS?
+
+**Network File System (NFS)**, developed by Sun Microsystems, serves the same purpose as SMB — accessing file systems over a network as if they were local — but it's used **between Linux and Unix** systems.
+
+A big advantage of **NFSv4** over older versions is that it uses just a single port (TCP or UDP **2049**), which makes it much easier to run across firewalls. Older versions also rely on the **ONC-RPC/SUN-RPC** protocol on **port 111**, using XDR (External Data Representation) for system-independent data exchange.
+
+The critical security fact: **NFS has no authentication or authorization mechanism of its own.** Authentication is shifted entirely onto RPC's options — which is exactly the gap you exploit.
+
+---
+
+## Default Configuration
+
+NFS is simpler to configure than FTP or SMB. The `/etc/exports` file holds a table of the physical filesystems the server makes available, which hosts/subnets can reach them, and with what rights:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/exports
+/mnt/nfs    10.129.14.0/24(rw,sync,no_subtree_check)
+```
+
+This entry shares `/mnt/nfs` to the entire `10.129.14.0/24` subnet — meaning **any host on that network can mount the share and inspect its contents**. Each export is the folder, then the host or subnet allowed, then the options in parentheses.
+
+---
+
+## Dangerous Settings
+
+Several export options are risky:
+
+| Option           | Risk                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rw`             | Read-write access — clients can modify files                                                                                                                              |
+| `insecure`       | **Allows ports above 1024.** Normally only root can use ports below 1024, which keeps unprivileged local users from interacting with NFS. `insecure` removes that barrier |
+| `nohide`         | Exposes nested/child filesystems                                                                                                                                          |
+| `no_root_squash` | **The big one** — a client connecting as root is treated as root on the share, instead of being "squashed" to the unprivileged `nobody` user                              |
+
+<Tip>
+  `no_root_squash` is the privilege-escalation enabler. With it set, you can
+  write a root-owned SUID binary onto the share from your own machine (where
+  you're root), then execute it on the target to run as root. Without it,
+  `root_squash` maps you down to `nobody` and even root can't touch root-owned
+  files like a `backup.sh`.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### RPC Enumeration with Nmap
+
+Ports **111** and **2049** are the ones that matter. The `rpcinfo` NSE script lists all running RPC services, their names, and ports — confirming the share is reachable on the ports it needs:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -sC -p111,2049 10.129.14.128
+```
+
+```
+PORT     STATE SERVICE  VERSION
+111/tcp  open  rpcbind  2-4 (RPC #100000)
+| rpcinfo:
+|   program version    port/proto  service
+|   100000  2,3,4        111/tcp   rpcbind
+|   100003  3,4         2049/tcp   nfs
+|   100005  1,2,3        892/tcp   mountd
+2049/tcp open  nfs_acl  3 (RPC #100227)
+```
+
+NFS-specific NSE scripts can go further and show the share's contents and stats:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap --script nfs-ls,nfs-showmount,nfs-statfs -p111,2049 10.129.14.128
+```
+
+### Show Available Shares
+
+List the exports with `showmount`:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+showmount -e 10.129.14.128
+```
+
+```
+Export list for 10.129.14.128:
+/mnt/nfs 10.129.14.0/24
+```
+
+### Mount the Share
+
+Create an empty local folder and mount the share to it, then browse it like any local directory:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+mkdir target-nfs
+sudo mount -t nfs 10.129.14.128:/mnt/nfs ./target-nfs/ -o nolock
+cd target-nfs
+```
+
+### List with Owners — and Why It Matters
+
+List contents showing usernames/groups, then UIDs/GIDs:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# By username / group name
+ls -l target-nfs/
+
+# By numeric UID / GID
+ls -n target-nfs/
+```
+
+```
+-rw-r--r-- 1 cry0l1t3 cry0l1t3  1872 Jun 25 12:00 id_rsa
+-rwx------ 1 root     root       402 Jun 25 12:00 backup.sh
+```
+
+Because NFS trusts the client's UID, once you know the **UIDs and GIDs** that own the files, you can create matching users/groups on _your own_ machine and adapt to the share — letting you read and modify files as those owners.
+
+<Tip>
+  If `root_squash` is set, you **cannot** edit a root-owned file like
+  `backup.sh` even as root — your root gets squashed to `nobody`. That single
+  option is the difference between "I can read the share" and "I own this box."
+</Tip>
+
+### Escalation via SUID
+
+NFS also enables local privilege escalation. If you already have SSH access and want to read files only a specific user can access, upload a shell to the NFS share with that user's **SUID** set (from your machine, where you control ownership), then run it through your SSH session — it executes with the SUID user's rights.
+
+When you're finished, unmount cleanly:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+sudo umount ./target-nfs/
+```
+
+---
+
+## Quick Reference
+
+| Command                                              | Purpose                              |
+| ---------------------------------------------------- | ------------------------------------ |
+| `nmap -sV -sC -p111,2049 <ip>`                       | RPC + NFS enumeration                |
+| `nmap --script nfs-ls,nfs-showmount,nfs-statfs <ip>` | Share contents and stats             |
+| `showmount -e <ip>`                                  | List available exports               |
+| `mount -t nfs <ip>:/share ./local -o nolock`         | Mount the share                      |
+| `ls -l` / `ls -n`                                    | List with owner names / numeric UIDs |
+| `umount ./local`                                     | Unmount when done                    |
+
+**The footprinting flow:** nmap/rpcinfo to confirm RPC and NFS → showmount to list exports → mount the share → list by UID/GID → impersonate owners (or abuse `no_root_squash`/SUID to escalate).
+
+---
+
+_Next: [RSYNC](/tech/services/rsync) — enumerating and pulling files from rsync modules._

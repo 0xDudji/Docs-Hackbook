@@ -1,0 +1,173 @@
+# MySQL
+
+> A MySQL server reachable on the network is a direct line to whatever the application stores — users, password hashes, session data, business records. Weak or reused credentials get you in, and from there `secure_file_priv` and `FILE` privileges can turn a database login into file reads and sometimes code execution.
+
+<Note>**Protocol:** TCP · **Port:** 3306</Note>
+
+---
+
+## What Is MySQL?
+
+**MySQL** is an open-source relational database management system, developed and supported by Oracle. Databases are often dumped to a single `.sql` file (e.g. `wordpress.sql`).
+
+A MySQL server translates SQL commands into executable actions and returns the result to the client — a table extract, login records, search results, and so on. When something goes wrong during processing, the application reports an error, and **those errors are exactly what SQL injection provokes** to manipulate the database.
+
+---
+
+## Default Configuration
+
+MySQL is configured through `/etc/mysql/mysql.conf.d/mysqld.cnf` (or `my.cnf`):
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# mysqld.cnf
+[mysqld]
+user            = mysql
+pid-file        = /var/run/mysqld/mysqld.pid
+socket          = /var/run/mysqld/mysqld.sock
+port            = 3306
+bind-address    = 127.0.0.1
+```
+
+---
+
+## Dangerous Settings
+
+The security-relevant options:
+
+| Setting            | Risk                                                                          |
+| ------------------ | ----------------------------------------------------------------------------- |
+| `user`             | The OS user MySQL runs as — stored in plain text in the config                |
+| `password`         | The MySQL user's password — **plain text** in the config                      |
+| `admin_address`    | IP for TCP/IP connections on the admin interface                              |
+| `debug`            | Current debugging settings — verbose error output                             |
+| `sql_warnings`     | Whether single-row INSERTs produce info strings on warnings                   |
+| `secure_file_priv` | Limits import/export operations — if empty, enables arbitrary file read/write |
+
+`user`, `password`, and `admin_address` matter because they're stored in **plain text**. Config-file permissions are often set wrong — so if you get any file-read primitive or a shell, you can read the MySQL username and password straight out of the config.
+
+`debug` and `sql_warnings` produce verbose error output. That's useful to an administrator but leaks sensitive content to everyone else — error messages are often shown directly in the web application, and that detail can be used to refine SQL injection, sometimes to the point of getting the server to **execute system commands**.
+
+<Tip>
+  An empty `secure_file_priv` is the dangerous one. It removes the restriction
+  on file import/export, so a user with the `FILE` privilege can read arbitrary
+  files (`LOAD_FILE()`) and write files (`INTO OUTFILE`) — which can mean
+  reading `/etc/passwd` or dropping a web shell into the web root.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### Nmap
+
+MySQL runs on **TCP 3306**. Scan with the MySQL NSE scripts:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -sC -p3306 --script mysql-* 10.129.14.128
+```
+
+```
+PORT     STATE SERVICE VERSION
+3306/tcp open  mysql   MySQL 8.0.27
+| mysql-info:
+|   Protocol: 10
+|   Version: 8.0.27
+|   Capabilities flags: 65535
+|_  Auth Plugin Name: caching_sha2_password
+| mysql-empty-password:
+|_  root account has empty password
+```
+
+<Note>
+  Always confirm scan results manually — they throw false positives. The
+  `mysql-empty-password` result above is a perfect example: it claims `root` has
+  an empty password, but if you know the server uses a fixed password, that's a
+  false positive. Test before you trust it.
+</Note>
+
+### Connecting
+
+Log in with credentials you've guessed, found, or recovered elsewhere:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+mysql -u root -p'Password123' -h 10.129.14.128
+```
+
+<Note>
+  There must be **no space** between `-p` and the password (`-p'Password123'`,
+  not `-p 'Password123'`). With a space, MySQL treats the next argument as the
+  database name and prompts for the password interactively.
+</Note>
+
+### Enumerating Databases
+
+Once in, list the databases. Two always exist and matter for orientation:
+
+```sql theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+SHOW DATABASES;
+```
+
+```
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
+| wordpress          |
++--------------------+
+```
+
+- **`information_schema`** — metadata about every database, table, and column on the server
+- **`sys`** — system schema with tables, info, and metadata for management
+
+The application's own database (`wordpress` here) is where the interesting data lives — users and password hashes especially.
+
+---
+
+## MySQL Command Reference
+
+| Command                                              | Purpose                              |
+| ---------------------------------------------------- | ------------------------------------ |
+| `mysql -u <user> -p<password> -h <ip>`               | Connect (no space after `-p`)        |
+| `SHOW DATABASES;`                                    | List all databases                   |
+| `USE <database>;`                                    | Select a database                    |
+| `SHOW TABLES;`                                       | List tables in the selected database |
+| `SHOW COLUMNS FROM <table>;`                         | List a table's columns               |
+| `SELECT * FROM <table>;`                             | Dump a table                         |
+| `SELECT * FROM <table> WHERE <column> = "<string>";` | Search a table                       |
+
+A typical hunt — find the users table and pull credentials:
+
+```sql theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+USE wordpress;
+SHOW TABLES;
+SELECT user_login, user_pass FROM wp_users;
+```
+
+```
++------------+------------------------------------+
+| user_login | user_pass                          |
++------------+------------------------------------+
+| admin      | $P$B7e3.x...hashed...               |
++------------+------------------------------------+
+```
+
+---
+
+## Quick Reference
+
+| Command                                          | Purpose                                                  |
+| ------------------------------------------------ | -------------------------------------------------------- |
+| `nmap -sV -sC -p3306 --script mysql-* <ip>`      | Enumerate MySQL (confirm false positives)                |
+| `mysql -u <user> -p<pass> -h <ip>`               | Connect                                                  |
+| `SHOW DATABASES;` → `USE <db>;` → `SHOW TABLES;` | Explore structure                                        |
+| `SELECT * FROM <table>;`                         | Dump data                                                |
+| `SELECT LOAD_FILE('/etc/passwd');`               | Read a file (needs FILE priv + empty `secure_file_priv`) |
+
+**The footprinting flow:** nmap for 3306 and version → confirm results manually → log in with found/guessed creds → enumerate databases → dump the application's user table → abuse `FILE` privileges if `secure_file_priv` is open.
+
+---
+
+_Next: [MSSQL](/tech/services/mssql) — Microsoft SQL Server, xp_cmdshell, and command execution._

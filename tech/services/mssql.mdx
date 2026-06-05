@@ -1,0 +1,197 @@
+# MSSQL
+
+> Microsoft SQL Server isn't just a place data lives — it's a foothold on a Windows box. Weak `sa` credentials get you in, and `xp_cmdshell` lets you run operating-system commands straight from a SQL prompt. A database login becomes code execution on the host.
+
+<Note>**Protocol:** TCP · **Port:** 1433</Note>
+
+---
+
+## What Is MSSQL?
+
+**Microsoft SQL Server (MSSQL)** is Microsoft's SQL-based relational database management system. Versions run on Linux and macOS, but you'll most often meet MSSQL on **Windows** targets — which is what makes it so valuable: it ties directly into Windows authentication and can execute OS commands.
+
+### MSSQL Clients
+
+**SQL Server Management Studio (SSMS)** ships with the MSSQL install package or can be downloaded separately. Because it's a _client_ application, it can be installed on any admin's or developer's workstation — not just the database server.
+
+<Tip>
+  Since SSMS lives on client machines too, you may find a vulnerable workstation
+  with **SSMS holding saved credentials** that connect straight to the database.
+  The DB server isn't the only place to look for a way in.
+</Tip>
+
+### Default System Databases
+
+MSSQL ships with system databases that reveal the structure of everything hosted on the server:
+
+| Database   | Purpose                                                             |
+| ---------- | ------------------------------------------------------------------- |
+| `master`   | Tracks all system information for the SQL Server instance           |
+| `model`    | Template for every new database — changes here propagate to new DBs |
+| `msdb`     | Used by SQL Server Agent to schedule jobs and alerts                |
+| `tempdb`   | Stores temporary objects                                            |
+| `resource` | Read-only database of the system objects shipped with SQL Server    |
+
+---
+
+## Default Configuration
+
+When an admin installs MSSQL to be network-accessible, the service typically runs as **`NT SERVICE\MSSQLSERVER`**.
+
+Authentication set to **Windows Authentication** means the underlying Windows OS processes the login — checking the local SAM database or the domain controller (Active Directory) before granting access to the DBMS. That's the link that makes MSSQL a stepping stone into the wider Windows environment.
+
+---
+
+## Dangerous Settings
+
+Worth investigating on any MSSQL instance:
+
+| Setting                         | Risk                                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| No encryption                   | Clients connecting unencrypted — traffic (including queries) is sniffable         |
+| Self-signed certificates        | When encryption _is_ used, self-signed certs can be **spoofed** for MITM          |
+| Named pipes                     | Enabled named-pipe access widens the attack surface                               |
+| Weak / default `sa` credentials | The `sa` (sysadmin) account is often left enabled with a weak or default password |
+
+<Tip>
+  The `sa` account is the prize. It's the built-in sysadmin, and admins
+  frequently forget to disable it or leave it with a weak password. `sa` access
+  means full control of the server — including the ability to enable and run
+  `xp_cmdshell` for OS command execution.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### MSSQL Clients for Pentesters
+
+Beyond SSMS, many clients can connect to MSSQL:
+
+1. `mssql-cli`
+2. SQL Server PowerShell
+3. HeidiSQL
+4. SQLPro
+5. **Impacket's `mssqlclient.py`**
+
+`mssqlclient.py` is usually the most useful — Impacket ships on most pentest distros by default. Find it with:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+locate mssqlclient
+```
+
+### Nmap
+
+MSSQL listens on **TCP 1433**. The MSSQL NSE scripts pull a lot at once — hostname, instance name, version, and whether named pipes are enabled:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+sudo nmap --script ms-sql-info,ms-sql-empty-password,ms-sql-xp-cmdshell,ms-sql-config,ms-sql-ntlm-info,ms-sql-tables,ms-sql-hasdbaccess,ms-sql-dac,ms-sql-dump-hashes \
+  --script-args mssql.instance-port=1433,mssql.username=sa,mssql.password=,mssql.instance-name=MSSQLSERVER \
+  -sV -p1433 10.129.201.248
+```
+
+```
+PORT     STATE SERVICE  VERSION
+1433/tcp open  ms-sql-s Microsoft SQL Server 2019 15.00.2000
+| ms-sql-info:
+|   10.129.201.248:1433:
+|     Version: Microsoft SQL Server 2019
+|     Instance name: MSSQLSERVER
+|     Named pipe: \\10.129.201.248\pipe\sql\query
+|_    TCP port: 1433
+```
+
+### Metasploit mssql_ping
+
+The `mssql_ping` auxiliary scanner adds more footprinting detail:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+use auxiliary/scanner/mssql/mssql_ping
+set RHOSTS 10.129.201.248
+run
+```
+
+### Connecting with mssqlclient.py
+
+With guessed or recovered credentials, connect and interact using **T-SQL** (Transact-SQL). The `windows-auth` flag uses Windows authentication:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+mssqlclient.py sa:Password123@10.129.201.248 -windows-auth
+```
+
+```
+Impacket v0.11.0 - Copyright 2023 Fortra
+[*] Encryption required, switching to TLS
+[*] ACK! ... Login success.
+[*] INFO(SQL01): Line 1: Changed database context to 'master'.
+SQL>
+```
+
+Get a lay of the land by listing databases (in MSSQL, tables are `sysobjects`):
+
+```sql theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+SELECT name FROM sys.databases;
+```
+
+```
+name
+-----------
+master
+tempdb
+model
+msdb
+inlanefreight_db
+```
+
+---
+
+## Command Execution with xp_cmdshell
+
+This is what sets MSSQL apart. With `sa` (or sufficient privileges), the `xp_cmdshell` stored procedure runs OS commands as the SQL service account. It's disabled by default, but you can enable it from the SQL prompt:
+
+```sql theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+-- Enable advanced options
+EXEC sp_configure 'show advanced options', 1;
+RECONFIGURE;
+
+-- Enable xp_cmdshell
+EXEC sp_configure 'xp_cmdshell', 1;
+RECONFIGURE;
+
+-- Run an OS command
+EXEC xp_cmdshell 'whoami';
+```
+
+```
+output
+-------------------------
+nt service\mssqlserver
+```
+
+<Tip>
+  `xp_cmdshell` turns a database login into a shell on the Windows host, running
+  as the SQL service account. From `whoami` you can move to downloading and
+  running a payload, and from there to privilege escalation — the SQL service
+  account often has `SeImpersonatePrivilege`, opening the door to a Potato
+  attack. This is the single most important reason to prioritize MSSQL on a
+  Windows engagement.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Command                                            | Purpose                             |
+| -------------------------------------------------- | ----------------------------------- |
+| `nmap --script ms-sql-* -p1433 <ip>`               | Enumerate instance, version, config |
+| `auxiliary/scanner/mssql/mssql_ping`               | Metasploit footprinting             |
+| `mssqlclient.py <user>:<pass>@<ip> -windows-auth`  | Connect via T-SQL                   |
+| `SELECT name FROM sys.databases;`                  | List databases                      |
+| `EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;` | Enable command execution            |
+| `EXEC xp_cmdshell 'whoami';`                       | Run an OS command                   |
+
+**The footprinting flow:** nmap `ms-sql-*` for instance/version → try `sa` with weak/default creds → connect with mssqlclient.py → enumerate databases → enable and abuse `xp_cmdshell` for command execution on the host.
+
+---
+
+_Next: [Oracle TNS](/tech/services/oracle-tns) — the Oracle listener, SID enumeration, and database privilege escalation._

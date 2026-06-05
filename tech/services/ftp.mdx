@@ -1,0 +1,278 @@
+# FTP
+
+> FTP is one of the oldest services you'll meet on an engagement, and one of the most generous when misconfigured. Anonymous logins, world-readable files, writable web roots, and chatty banners make it a reliable first foothold.
+
+<Note>**Protocol:** TCP · **Port:** 21 (data on 20)</Note>
+
+---
+
+## FTP vs TFTP
+
+**FTP** (File Transfer Protocol) transfers files between a client and server over **TCP port 21**, with user authentication and a full set of commands.
+
+**TFTP** (Trivial File Transfer Protocol) is the stripped-down cousin. It runs over **UDP**, has **no authentication**, no password-protected login, and no directory listing. In practice it only operates on globally readable/writable files, so it should only ever appear on local, protected networks — and when you find it exposed, that's already a finding.
+
+A few core TFTP commands:
+
+| Command   | Purpose                                                  |
+| --------- | -------------------------------------------------------- |
+| `connect` | Set the remote host (and optionally port) for transfers  |
+| `get`     | Pull a file from the remote host to the local host       |
+| `put`     | Push a local file onto the remote host                   |
+| `status`  | Show current status — transfer mode, connection, timeout |
+| `verbose` | Toggle extra information during transfers                |
+| `quit`    | Exit tftp                                                |
+
+Remember: unlike FTP, TFTP **can't list directories** — you have to already know the filename you want.
+
+---
+
+## Default Configuration
+
+One of the most common FTP servers on Linux is **vsFTPd**, configured in `/etc/vsftpd.conf`. It's only one of many FTP servers, but it's the one you'll see most often.
+
+Key settings in a default `vsftpd.conf`:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/vsftpd.conf
+listen=NO                        # run standalone or from inetd
+listen_ipv6=YES                  # listen on IPv6
+anonymous_enable=NO              # allow anonymous access?
+local_enable=YES                 # allow local users to log in?
+dirmessage_enable=YES            # show messages when entering directories
+use_localtime=YES
+xferlog_enable=YES               # log uploads/downloads
+connect_from_port_20=YES
+secure_chroot_dir=/var/run/vsftpd/empty
+pam_service_name=vsftpd          # PAM service name
+rsa_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+rsa_private_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+ssl_enable=NO
+```
+
+There's also `/etc/ftpusers`, which **denies** specific users access to FTP even if they exist on the system. For example, listing `guest`, `john`, and `kevin` there blocks those accounts from logging in:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/ftpusers
+guest
+john
+kevin
+```
+
+---
+
+## Dangerous Settings
+
+The setting that matters most to an attacker is **anonymous access**. In `vsftpd.conf`, the anonymous-related options look like this:
+
+| Setting                        | Effect                                                                             |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| `anonymous_enable=YES`         | Allow anonymous login                                                              |
+| `anon_upload_enable=YES`       | Let anonymous users upload files                                                   |
+| `anon_mkdir_write_enable=YES`  | Let anonymous users create directories                                             |
+| `no_anon_password=YES`         | Don't even ask anonymous for a password                                            |
+| `anon_root=/home/username/ftp` | Root directory for anonymous sessions                                              |
+| `write_enable=YES`             | Allow write commands: `STOR`, `DELE`, `RNFR`, `RNTO`, `MKD`, `RMD`, `APPE`, `SITE` |
+
+<Tip>
+  `anonymous_enable=YES` combined with `write_enable=YES` or
+  `anon_upload_enable=YES` is the dangerous pairing — it means anyone can not
+  only read files but drop their own. On an FTP server tied to a web root,
+  that's a path to a web shell.
+</Tip>
+
+When you connect, the server greets you with **response code 220** and a banner — which often discloses the service description and even its version. Even when you can't download anything, just listing the directory contents can hand you names and intel for another angle of attack.
+
+---
+
+## Footprinting the Service
+
+### Anonymous Login
+
+The first thing to try is logging in as `anonymous` (any password, often blank):
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ftp 10.129.14.136
+```
+
+```
+Connected to 10.129.14.136.
+220 "Welcome to the HTB FTP service."
+Name (10.129.14.136:user): anonymous
+331 Please specify the password.
+Password:
+230 Login successful.
+Remote system type is UNIX.
+ftp> ls
+200 PORT command successful.
+150 Here comes the directory listing.
+drwxr-xr-x    2 0        125          4096 Jun 25  2024 pub
+226 Directory send OK.
+```
+
+### Get an Overview with `status`
+
+To see how the server is configured at a glance, use `status`:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ftp> status
+```
+
+```
+Connected to 10.129.14.136.
+No proxy connection.
+Connecting using address family: any.
+Mode: stream; Type: binary; Form: non-print; Structure: file
+Verbose: on; Bell: off; Prompting: on; Globbing: on
+Store unique: off; Receive unique: off
+Case: off; CR stripping: on
+```
+
+### Reveal More with `debug` and `trace`
+
+Turning on `debug` and `trace` makes the server show you more of what's happening under the hood — useful for understanding its behavior:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ftp> debug
+Debugging on (debug=1).
+ftp> trace
+Packet tracing on.
+ftp> ls
+---> PORT 10,10,14,4,228,12
+200 PORT command successful.
+---> LIST
+150 Here comes the directory listing.
+```
+
+### Spotting `hide_ids` and `ls_recurse_enable`
+
+If `hide_ids=YES` is set, the UID/GID of files is overwritten (shown as `ftp` or `0`), making it harder to tell what rights files were written with. Conversely, if `ls_recurse_enable=YES` is set — common on vsFTPd for convenience — you can list the entire directory tree in one shot:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ftp> ls -R
+```
+
+```
+.:
+drwxr-xr-x    3 0   0   4096 Jun 25  2024 pub
+
+./pub:
+drwxr-xr-x    2 0   0   4096 Jun 25  2024 backup
+
+./pub/backup:
+-rw-r--r--    1 0   0    582 Jun 25  2024 config.bak
+```
+
+### Download Everything
+
+When the server has a large folder structure, you can mirror the whole thing at once with `wget`. Be aware this is noisy — nobody legitimately downloads an entire FTP server in one go:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+wget -m --no-passive ftp://anonymous:anonymous@10.129.14.136
+```
+
+`wget` creates a directory named after the target's IP and stores everything there for offline inspection.
+
+### Test Upload Access
+
+Check whether you can upload — especially valuable when the FTP server is tied to a web server, since developers often sync files between them. Upload access there can mean dropping a web shell and getting code execution:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ftp> put shell.php
+local: shell.php remote: shell.php
+200 PORT command successful.
+150 Ok to send data.
+226 Transfer complete.
+```
+
+<Tip>
+  Upload access to an FTP server connected to a web root is one of the cleanest
+  paths to a reverse shell. Drop a web shell, browse to it, and you've turned a
+  file server into command execution.
+</Tip>
+
+---
+
+## Scanning FTP
+
+Network scanners make footprinting easier and can find FTP even on non-standard ports. Nmap's NSE scripts are the standard approach.
+
+First, the FTP-related NSE scripts live in `/usr/share/nmap/scripts/` and can be found with:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+find / -type f -name "ftp*" 2>/dev/null | grep scripts
+```
+
+Run the default FTP scripts with version detection:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -p21 -sC -A 10.129.14.136
+```
+
+```
+PORT   STATE SERVICE VERSION
+21/tcp open  ftp     vsftpd 3.0.3
+| ftp-anon: Anonymous FTP login allowed (FTP code 230)
+|_drwxr-xr-x    2 0   125   4096 Jun 25  2024 pub
+| ftp-syst:
+|   STAT:
+| FTP server status:
+|      Connected to ::ffff:10.10.14.4
+|      Logged in as ftp
+|      TYPE: ASCII
+|_     vsFTPd 3.0.3 - secure, fast, stable
+```
+
+To watch what the NSE scripts are doing at the network level, add `--script-trace`. It shows the commands Nmap sends, the ports used, and the server's responses — including the banner returned to one of the parallel NSE connections:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -p21 -sC -A 10.129.14.136 --script-trace
+```
+
+### Interact Manually with netcat / telnet
+
+You can also talk to the server directly:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nc -nv 10.129.14.136 21
+telnet 10.129.14.136 21
+```
+
+### TLS/SSL FTP with openssl
+
+If the server runs with TLS/SSL (FTPS), you need a client that speaks it. `openssl` works and has the bonus of showing you the **SSL certificate**, which can itself contain useful information:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+openssl s_client -connect 10.129.14.136:21 -starttls ftp
+```
+
+```
+CONNECTED(00000003)
+---
+Certificate chain
+ 0 s:CN = ftp.inlanefreight.htb
+   i:CN = ftp.inlanefreight.htb
+---
+220 Welcome to the secure HTB FTP service.
+```
+
+---
+
+## Quick Reference
+
+| Command                                               | Purpose                        |
+| ----------------------------------------------------- | ------------------------------ |
+| `ftp <ip>` → `anonymous`                              | Attempt anonymous login        |
+| `ftp> status`                                         | Overview of server settings    |
+| `ftp> debug` / `trace`                                | Reveal protocol-level detail   |
+| `ftp> ls -R`                                          | Recursive listing (if enabled) |
+| `wget -m --no-passive ftp://anonymous:anonymous@<ip>` | Mirror the whole server        |
+| `ftp> put <file>`                                     | Test upload access             |
+| `nmap -sV -sC -p21 <ip>`                              | NSE enumeration                |
+| `openssl s_client -connect <ip>:21 -starttls ftp`     | Connect to FTPS, view cert     |
+
+**The footprinting flow:** anonymous login → `status` for config → recursive listing → download everything → test upload → fall back to nmap/openssl for banner and version intel.
+
+---
+
+_Next: [SMB](/tech/services/smb) — shares, null sessions, and pulling files off Windows file servers._

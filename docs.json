@@ -148,6 +148,30 @@
             "pages": ["tech/index"]
           },
           {
+            "group": "Services",
+            "root": "tech/services/index",
+            "pages": [
+              "tech/services/ports",
+              "tech/services/dns",
+              "tech/services/ftp",
+              "tech/services/smb",
+              "tech/services/smtp",
+              "tech/services/imap_pop3",
+              "tech/services/snmp",
+              "tech/services/ssh",
+              "tech/services/rdp",
+              "tech/services/winrm",
+              "tech/services/wmi",
+              "tech/services/nfs",
+              "tech/services/rsync",
+              "tech/services/r-services",
+              "tech/services/ipmi",
+              "tech/services/mysql",
+              "tech/services/oracle_tnd",
+              "tech/services/mssql"
+            ]
+          },
+          {
             "group": "Linux",
             "root": "tech/linux/index",
             "pages": [

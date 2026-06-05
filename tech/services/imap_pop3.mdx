@@ -1,0 +1,206 @@
+# IMAP / POP3
+
+> If SMTP is how mail gets sent, IMAP and POP3 are how it gets read. Crack one set of employee credentials and these protocols let you log straight into their mailbox — where confidential data, password reset links, and internal correspondence are waiting.
+
+<Note>
+  **Protocol:** TCP · **Ports:** IMAP 143 / 993 (TLS) · POP3 110 / 995 (TLS)
+</Note>
+
+---
+
+## IMAP vs POP3
+
+Both **IMAP** (Internet Message Access Protocol) and **POP3** (Post Office Protocol) provide access to email on a mail server, but they work differently:
+
+|                  | IMAP                                     | POP3                                  |
+| ---------------- | ---------------------------------------- | ------------------------------------- |
+| **Storage**      | Mail stays on the server, managed online | Mail typically downloaded and removed |
+| **Folders**      | Supports folder structures               | No folder support                     |
+| **Multi-client** | Uniform view across all clients          | Each client downloads its own copy    |
+| **Functions**    | Full online management                   | List, retrieve, delete only           |
+
+IMAP keeps a consistent database across every device — sent mail copied into an IMAP folder is visible from any client. POP3 is the older, simpler model that just pulls mail down.
+
+Without extra measures, both run **unencrypted**, transmitting commands, mail, usernames, and passwords in plain text. That's why most servers require an encrypted (TLS) session — and why the TLS ports (993, 995) are the ones you'll usually be authenticating against.
+
+---
+
+## Default Configuration
+
+A common Linux mail server providing IMAP/POP3 is **Dovecot**. Both protocols have many configuration options, but for footprinting what matters is the command set you can drive from the command line.
+
+**IMAP commands:**
+
+| Command                  | Purpose                                |
+| ------------------------ | -------------------------------------- |
+| `LOGIN user pass`        | Authenticate                           |
+| `LIST "" *`              | List all mailboxes                     |
+| `SELECT <mailbox>`       | Select a mailbox to work in            |
+| `FETCH <id> all`         | Retrieve a message                     |
+| `FETCH <id> BODY.PEEK[]` | Read a message without marking it read |
+| `LOGOUT`                 | Close the session                      |
+
+**POP3 commands:**
+
+| Command       | Purpose                     |
+| ------------- | --------------------------- |
+| `USER <name>` | Provide the username        |
+| `PASS <pass>` | Provide the password        |
+| `STAT`        | Number/size of messages     |
+| `LIST`        | List messages               |
+| `RETR <id>`   | Retrieve a message          |
+| `DELE <id>`   | Mark a message for deletion |
+| `QUIT`        | Close the session           |
+
+---
+
+## Dangerous Settings
+
+Most companies use third-party providers (Google, Microsoft), but some still run their own mail servers — and that's where misconfigurations let you read every email sent and received, sensitive ones included.
+
+Configuration options worth scrutinizing:
+
+| Setting                         | Risk                                                         |
+| ------------------------------- | ------------------------------------------------------------ |
+| `auth_debug` / `auth_verbose`   | Logs authentication detail — credentials can leak into logs  |
+| Plaintext auth allowed          | Credentials transmitted in clear text, sniffable on the wire |
+| Anonymous / guest login enabled | Mailbox access without valid credentials                     |
+| Self-signed / mismatched certs  | Easier man-in-the-middle, and the cert itself leaks org info |
+
+<Tip>
+  The real prize here is **credential reuse**. If you've recovered an employee's
+  password anywhere else on the engagement, try it against IMAP/POP3 — a
+  successful login gives you their entire mailbox: internal documents, password
+  reset emails, and often credentials for other systems.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### Nmap
+
+Scan the four IMAP/POP3 ports. If the server uses an embedded SSL certificate, the scan reveals organisational detail:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -sC -p110,143,993,995 10.129.14.128
+```
+
+```
+PORT    STATE SERVICE  VERSION
+110/tcp open  pop3     Dovecot pop3d
+143/tcp open  imap     Dovecot imapd
+993/tcp open  ssl/imap Dovecot imapd
+| ssl-cert: Subject: commonName=mail1.inlanefreight.htb/
+|   organizationName=InlaneFreight/stateOrProvinceName=California/countryName=US
+995/tcp open  ssl/pop3 Dovecot pop3d
+```
+
+From the certificate you can read the common name (`mail1.inlanefreight.htb`), the organization (`InlaneFreight`), and location (California) — all useful for building username lists and understanding the target.
+
+### cURL
+
+`curl` can list a mailbox directly. Adding verbose (`-v`) shows the TLS version, SSL certificate details, and the banner — which often discloses the mail server version:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+curl -k 'imaps://10.129.14.128' --user user:password -v
+```
+
+```
+* Connected to 10.129.14.128 (10.129.14.128) port 993
+* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384
+* Server certificate:
+*  subject: CN=mail1.inlanefreight.htb; O=InlaneFreight
+< * OK [CAPABILITY IMAP4rev1 ...] Dovecot ready.
+```
+
+### Netcat — Plaintext Ports
+
+You can talk to the plaintext ports (143 / 110) directly with `nc`. Connect to IMAP:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nc 10.129.14.128 143
+```
+
+```
+* OK [CAPABILITY IMAP4rev1 LITERAL+ SASL-IR ...] Dovecot ready.
+1 login user password
+1 NO [PRIVACYREQUIRED] Plaintext authentication disallowed on non-secure (SSL/TLS) connections.
+```
+
+And POP3:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nc 10.129.14.128 110
+```
+
+```
++OK Dovecot ready.
+USER user
++OK
+PASS password
+-ERR [AUTH] Plaintext authentication disallowed.
+```
+
+In both cases the server refuses plaintext auth — which tells you to switch to `openssl` against the TLS ports.
+
+### OpenSSL — TLS-Encrypted Interaction
+
+Connect over TLS to authenticate properly. IMAP over SSL:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+openssl s_client -connect 10.129.14.128:imaps
+```
+
+POP3 over SSL:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+openssl s_client -connect 10.129.14.128:pop3s
+```
+
+### Reading Mail Over IMAP
+
+Once authenticated over TLS, list mailboxes, select one, and read messages:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Authenticate
+1 LOGIN user password
+
+# List all mailboxes
+1 LIST "" *
+
+# Select a mailbox
+1 SELECT INBOX
+
+# Retrieve a message (full)
+1 FETCH 1 all
+
+# Read a message WITHOUT marking it as read
+1 FETCH 1 BODY.PEEK[]
+```
+
+<Tip>
+  Use `BODY.PEEK[]` instead of `FETCH ... all` when reading mail — `PEEK`
+  retrieves the message without setting the `\Seen` flag, so the mailbox owner
+  doesn't notice their unread mail suddenly being marked read. It's the quiet
+  way to read someone's inbox.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Command                                                 | Purpose                               |
+| ------------------------------------------------------- | ------------------------------------- |
+| `nmap -sV -sC -p110,143,993,995 <ip>`                   | Scan all four ports, read cert        |
+| `curl -k 'imaps://<ip>' --user u:p -v`                  | List mailbox, view TLS/banner         |
+| `nc <ip> 143` / `nc <ip> 110`                           | Plaintext interaction (often refused) |
+| `openssl s_client -connect <ip>:imaps`                  | TLS IMAP session                      |
+| `openssl s_client -connect <ip>:pop3s`                  | TLS POP3 session                      |
+| `LIST "" *` → `SELECT <box>` → `FETCH <id> BODY.PEEK[]` | Read mail quietly                     |
+
+**The footprinting flow:** nmap for ports + cert intel → curl/openssl for banner and version → authenticate over TLS with found credentials → list mailboxes → read mail with `BODY.PEEK[]`.
+
+---
+
+_Next: [SNMP](/tech/services/snmp) — community strings and walking the MIB for credentials and config._

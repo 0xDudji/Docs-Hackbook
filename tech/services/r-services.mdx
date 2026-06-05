@@ -1,0 +1,138 @@
+# R-Services
+
+> R-services are the insecure ancestor of SSH — remote access built on _trust_ rather than authentication. A single `+` in a `.rhosts` file tells the host to trust anyone, and you log in as another user with no password at all. Rare today, but when you find them, they're a free foothold.
+
+<Note>**Protocol:** TCP · **Ports:** 512, 513, 514</Note>
+
+---
+
+## What Are R-Services?
+
+**R-services** were the de facto standard for remote access between Unix systems until **SSH** replaced them, precisely because of their built-in security flaws. Like telnet, they transmit everything — passwords, login info — **unencrypted** over the network, making them trivial to intercept with a man-in-the-middle attack.
+
+They span **TCP ports 512, 513, and 514** and are accessed through a suite of programs called **r-commands**:
+
+| Command  | Daemon    | Port    | Description                                       |
+| -------- | --------- | ------- | ------------------------------------------------- |
+| `rcp`    | —         | 514     | Remote copy — copy files between hosts            |
+| `rexec`  | `rexecd`  | 512     | Remote execution — run a command on a remote host |
+| `rlogin` | `rlogind` | 513     | Remote login — like telnet, but trust-based       |
+| `rsh`    | `rshd`    | 514     | Remote shell — run commands without logging in    |
+| `rwho`   | `rwhod`   | 513/udp | List who's logged in across the local network     |
+| `rusers` | —         | —       | Detailed list of logged-in users network-wide     |
+
+---
+
+## Default Configuration
+
+The trust model lives in two files:
+
+- **`/etc/hosts.equiv`** — a system-wide list of trusted hosts. Users from these hosts are granted access **without further authentication**.
+- **`~/.rhosts`** — a per-user version of the same idea.
+
+By default these services use **PAM** (Pluggable Authentication Modules) for authentication, but `hosts.equiv` and `.rhosts` short-circuit that with a list of trusted host/user pairs.
+
+Entries follow the syntax `<username> <ip-or-hostname>`:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# ~/.rhosts
+htb-student   10.0.17.5
+admin         workstn02
++             10.0.17.10
+```
+
+The `+` modifier is a **wildcard meaning "anything."** In the example above, the `+ 10.0.17.10` line lets _any_ external user access r-commands from the `htb-student` account via the host at `10.0.17.10`.
+
+<Tip>
+  A `+` in `hosts.equiv` or `.rhosts` is the misconfiguration that defines
+  R-services exploitation. `+ +` (trust any user from any host) is the worst
+  case — it lets you authenticate as another user with no credentials at all,
+  often leading straight to code execution.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+### Scanning for R-Services
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -p512,513,514 10.129.14.128
+```
+
+```
+PORT    STATE SERVICE    VERSION
+512/tcp open  exec       netkit-rsh rexecd
+513/tcp open  login      OpenBSD or Solaris rlogind
+514/tcp open  shell      Netkit rshd
+```
+
+### Logging in with rlogin
+
+When `.rhosts` is misconfigured, `rlogin` gets you onto the host as the trusted user with no password:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rlogin 10.129.14.128 -l htb-student
+```
+
+```
+Last login: Tue Jun 25 12:00 from 10.0.17.5
+htb-student@target:~$ id
+uid=1000(htb-student) gid=1000(htb-student) groups=1000(htb-student)
+```
+
+That successful login with no credentials is the `.rhosts` misconfiguration paying off.
+
+### Listing Logged-in Users with rwho
+
+Once in, `rwho` lists all interactive sessions on the local network (it queries UDP port 513):
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rwho
+```
+
+```
+htb-student  workstn01:pts/0   Jun 25 12:00
+root         web01:pts/1       Jun 25 11:45
+```
+
+This is a username goldmine — here you can see `htb-student` is on `workstn01` and `root` is logged into `web01`, all useful targets for further attacks.
+
+<Note>
+  The `rwho` daemon **periodically broadcasts** logged-on-user info across the
+  network, so watching the traffic over time can surface users and hosts you'd
+  otherwise miss.
+</Note>
+
+### More Detail with rusers
+
+`rusers` gives a fuller picture than `rwho` — username, hostname, the TTY they're on, login date/time, idle time, and the remote host they connected from:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+rusers -al 10.129.14.128
+```
+
+```
+htb-student  workstn01:pts/0  Jun 25 12:00  2:14   (10.0.17.5)
+root         web01:console    Jun 25 11:45  0:03
+```
+
+---
+
+## Quick Reference
+
+| Command                       | Purpose                                                 |
+| ----------------------------- | ------------------------------------------------------- |
+| `nmap -sV -p512,513,514 <ip>` | Detect r-services                                       |
+| `rlogin <ip> -l <user>`       | Log in as a trusted user (no password if misconfigured) |
+| `rsh <ip> <command>`          | Run a command remotely                                  |
+| `rwho`                        | List logged-in users on the network                     |
+| `rusers -al <ip>`             | Detailed logged-in user info                            |
+
+**The key file:** `hosts.equiv` / `.rhosts`. A `+` wildcard means trust-anyone — log in as another user with no credentials.
+
+**The footprinting flow:** nmap for 512–514 → attempt rlogin against likely users → enumerate the network with rwho/rusers for more usernames and hosts to target.
+
+---
+
+_Next: [IPMI](/tech/services/ipmi) — baseboard management controllers and the infamous hash-retrieval flaw._

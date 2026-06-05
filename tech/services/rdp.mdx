@@ -1,0 +1,112 @@
+# RDP
+
+> RDP hands you a full graphical desktop on a Windows host — if you have credentials. There's rarely an exploit needed; the protocol is the front door, and the keys are the credentials you've gathered elsewhere. Scanning it also leaks the hostname, version, and whether NLA stands between you and a login.
+
+<Note>**Protocol:** TCP (and UDP) · **Port:** 3389</Note>
+
+---
+
+## What Is RDP?
+
+The **Remote Desktop Protocol (RDP)** is Microsoft's protocol for remote access to a Windows machine. It transmits display and control commands for the GUI, encrypted, over IP networks — operating at the **application layer** of the TCP/IP model, typically on **TCP port 3389** (UDP 3389 can also be used for remote administration).
+
+For a session to establish, both the network firewall and the server's own firewall have to allow the connection from outside.
+
+### Encryption and NLA
+
+Since Windows Vista, RDP supports **TLS/SSL**, protecting all data — especially the login — with strong encryption. But many Windows systems don't _insist_ on it and still accept weaker "RDP Security" encryption.
+
+Even with TLS, there's a catch: the identity certificates are **self-signed by default**, so the client can't tell a genuine certificate from a forged one. That produces a certificate warning the user has to click through — and it opens the door to man-in-the-middle attacks.
+
+The Remote Desktop service is installed by default on Windows Server (activated via Server Manager) and, by default, only allows connections from hosts using **Network Level Authentication (NLA)** — which forces authentication _before_ a session is created.
+
+---
+
+## Footprinting the Service
+
+### Nmap
+
+Scanning RDP quickly yields the hostname, product version, and whether **NLA** is enabled:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -sC -p3389 --script rdp-ntlm-info 10.129.14.128
+```
+
+```
+PORT     STATE SERVICE       VERSION
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+| rdp-ntlm-info:
+|   Target_Name: INLANEFREIGHT
+|   NetBIOS_Computer_Name: DC01
+|   Product_Version: 10.0.17763
+|_  System_Time: 2024-06-25T12:00:00+00:00
+| ssl-cert: Subject: commonName=DC01.inlanefreight.htb
+|_ssl-date: TLS randomness does not represent time
+```
+
+<Tip>
+  Adding `--packet-trace` lets you inspect the packets, but note that Nmap's RDP
+  probe uses an identifiable cookie — `mstshash=nmap`. Threat hunters and EDR
+  can spot that signature and lock you out on a hardened network. Be aware your
+  RDP scans are noisy and fingerprintable.
+</Tip>
+
+### rdp-sec-check — Identify Security Settings
+
+`rdp-sec-check.pl` (Cisco CX Security Labs) unauthenticatedly identifies an RDP server's security settings from its handshakes — useful for spotting weak encryption and whether NLA is enforced:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# Install
+git clone https://github.com/CiscoCXSecurity/rdp-sec-check.git
+cd rdp-sec-check
+
+# Run
+./rdp-sec-check.pl 10.129.14.128
+```
+
+```
+[+] Checking RDP security settings for 10.129.14.128
+  [-] PROTOCOL_SSL: SUPPORTED
+  [-] PROTOCOL_HYBRID (NLA): SUPPORTED
+  [-] PROTOCOL_RDP (standard RDP security): SUPPORTED
+  [-] Conclusion: server accepts weak RDP Security — MITM possible
+```
+
+---
+
+## Connecting to RDP
+
+Once you have valid credentials, connect from Linux with `xfreerdp`, `rdesktop`, or `Remmina`. `xfreerdp` is the standard:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+xfreerdp /u:admin /p:Password123 /v:10.129.14.128
+
+# With a domain, ignore the self-signed cert warning, go full screen
+xfreerdp /d:INLANEFREIGHT /u:admin /p:Password123 /v:10.129.14.128 /cert:ignore /f
+```
+
+After successful authentication a new window opens with the server's desktop.
+
+<Tip>
+  RDP creates an **interactive logon**, which caches the user's credentials in
+  LSASS memory. If you RDP in as a user — or catch an administrator who RDPs in
+  while you're already on the box — those credentials become dumpable. This ties
+  into the logon-type credential theft covered on the Windows side.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Command                                           | Purpose                                        |
+| ------------------------------------------------- | ---------------------------------------------- |
+| `nmap -sV -sC -p3389 --script rdp-ntlm-info <ip>` | Hostname, version, NLA status                  |
+| `rdp-sec-check.pl <ip>`                           | Identify RDP security settings unauthenticated |
+| `xfreerdp /u:.. /p:.. /v:<ip>`                    | Connect from Linux                             |
+| `xfreerdp /d:.. /u:.. /p:.. /v:<ip> /cert:ignore` | Connect with domain, ignore cert               |
+
+**The footprinting flow:** nmap for hostname/version/NLA → rdp-sec-check for encryption weaknesses → connect with found credentials via xfreerdp. Remember scans are fingerprintable (`mstshash=nmap`).
+
+---
+
+_Next: [WinRM](/tech/services/winrm) — Windows Remote Management and PowerShell remoting._

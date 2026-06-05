@@ -1,0 +1,96 @@
+---
+title: "Services"
+description: "Common network services from an offensive security perspective."
+---
+
+Service-specific knowledge — how each protocol works, how to enumerate it, and where misconfigurations turn into footholds.
+
+## Services
+
+<CardGroup cols={2}>
+  <Card title="DNS" icon="globe" href="/tech/services/dns">
+    Domain Name System — zone transfers, record enumeration, and subdomain brute-forcing.
+  </Card>
+  <Card title="FTP" icon="folder-open" href="/tech/services/ftp">
+    File Transfer Protocol — anonymous access, credential brute-forcing, and file exposure.
+  </Card>
+  <Card title="SMB" icon="network-wired" href="/tech/services/smb">
+    Server Message Block — share enumeration, null sessions, and lateral movement.
+  </Card>
+  <Card title="SMTP" icon="envelope" href="/tech/services/smtp">
+    Simple Mail Transfer Protocol — user enumeration and open relay abuse.
+  </Card>
+  <Card title="IMAP / POP3" icon="inbox" href="/tech/services/imap_pop3">
+    Mail retrieval protocols — credential attacks and mailbox access.
+  </Card>
+  <Card title="SNMP" icon="chart-network" href="/tech/services/snmp">
+    Simple Network Management Protocol — community string brute-forcing and MIB enumeration.
+  </Card>
+  <Card title="SSH" icon="terminal" href="/tech/services/ssh">
+    Secure Shell — key-based attacks, credential brute-forcing, and tunneling.
+  </Card>
+  <Card title="RDP" icon="desktop" href="/tech/services/rdp">
+    Remote Desktop Protocol — BlueKeep, credential attacks, and session hijacking.
+  </Card>
+  <Card title="WinRM" icon="server" href="/tech/services/winrm">
+    Windows Remote Management — authentication, Evil-WinRM, and lateral movement.
+  </Card>
+  <Card title="WMI" icon="microchip" href="/tech/services/wmi">
+    Windows Management Instrumentation — remote execution and enumeration.
+  </Card>
+  <Card title="NFS" icon="hard-drive" href="/tech/services/nfs">
+    Network File System — export enumeration, UID spoofing, and file access.
+  </Card>
+  <Card title="Rsync" icon="arrows-rotate" href="/tech/services/rsync">
+    Rsync — unauthenticated module listing and file retrieval.
+  </Card>
+  <Card title="R-Services" icon="arrow-right-arrow-left" href="/tech/services/r-services">
+    Berkeley R-Services — trust relationships and rlogin/rsh abuse.
+  </Card>
+  <Card title="IPMI" icon="gauge" href="/tech/services/ipmi">
+    Intelligent Platform Management Interface — authentication bypass and hash extraction.
+  </Card>
+  <Card title="MySQL" icon="database" href="/tech/services/mysql">
+    MySQL — enumeration, UDF exploitation, and credential extraction.
+  </Card>
+  <Card title="Oracle TNS" icon="database" href="/tech/services/oracle_tnd">
+    Oracle TNS Listener — SID enumeration and credential attacks.
+  </Card>
+  <Card title="MSSQL" icon="database" href="/tech/services/mssql">
+    Microsoft SQL Server — enumeration, xp_cmdshell, and linked server abuse.
+  </Card>
+</CardGroup>
+
+## Port & Services
+
+| Port | Service |
+| --- | --- |
+| 20 | FTP |
+| 22 | SSH |
+| 25, 587 | SMTP |
+| 53 | DNS |
+| 110, 143, 993, 995 | IMAP / POP3 |
+| 111, 2049 | NFS |
+| 135 | WMI |
+| 161, 162 | SNMP |
+| 445 | SMB |
+| 512, 513, 514 | R-Services |
+| 623 | IPMI |
+| 873 | Rsync |
+| 1433 | MSSQL |
+| 1521 | Oracle TNS |
+| 3306 | MySQL |
+| 3389 | RDP |
+| 5985, 5986 | WinRM |
+
+## OSI Layers & Attacks
+
+| OSI Layer | Attack |
+| --- | --- |
+| Application | Exploit |
+| Presentation | Phishing |
+| Session | Hijacking |
+| Transport | Reconnaissance |
+| Network | MITM |
+| Data Link | Spoofing |
+| Physical | Sniffing |

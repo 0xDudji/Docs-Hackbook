@@ -1,0 +1,221 @@
+# DNS
+
+> DNS is the phone book of the internet — and a misconfigured DNS server will happily read you every entry, including the ones meant to stay internal. Zone transfers, version disclosure, and subdomain brute-forcing turn a name server into a map of the target's infrastructure.
+
+<Note>**Protocol:** UDP (sometimes TCP) · **Port:** 53</Note>
+
+---
+
+## What Is DNS?
+
+DNS (Domain Name System) resolves computer names into IP addresses. There's no central database — it's a massive distributed system, like a library full of phone books where each server is responsible for its own section and refers you elsewhere for the rest.
+
+DNS is mostly **unencrypted**, which means queries can be intercepted and spied on. That privacy gap drove the creation of encrypted variants you'll occasionally encounter: **DNS over TLS (DoT)**, **DNS over HTTPS (DoH)**, and **DNSCrypt**.
+
+---
+
+## Default Configuration
+
+All DNS servers work with three types of configuration files:
+
+- **Local DNS configuration files**
+- **Zone files**
+- **Reverse name resolution files**
+
+On Linux, the most common DNS server is **BIND9**. Its local configuration files are usually:
+
+- `named.conf.local`
+- `named.conf.options`
+- `named.conf.log`
+
+### Local DNS Configuration
+
+The `named.conf` files define the server's zones and behavior. A typical local zone definition looks like this:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+# /etc/bind/named.conf.local
+zone "inlanefreight.htb" {
+    type master;
+    file "/etc/bind/db.inlanefreight.htb";
+    allow-update { none; };
+};
+```
+
+Zones are divided into individual files, each generally intended for one domain. A **zone file** is a text file describing a DNS zone in the BIND format.
+
+### Zone Files
+
+A zone file describes a zone completely. It must contain exactly one **SOA** (Start of Authority) record and at least one **NS** (Name Server) record. The SOA record sits at the top:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+$TTL 3600
+@   IN  SOA     ns1.inlanefreight.htb. admin.inlanefreight.htb. (
+                2024061301  ; Serial
+                3600        ; Refresh
+                1800        ; Retry
+                604800      ; Expire
+                86400 )     ; Minimum TTL
+@       IN  NS      ns1.inlanefreight.htb.
+@       IN  A       10.129.14.128
+ns1     IN  A       10.129.14.128
+www     IN  A       10.129.14.128
+```
+
+### Reverse Name Resolution Zone Files
+
+For an IP address to be resolved back to its Fully Qualified Domain Name (FQDN), the DNS server needs a **reverse lookup file**. These use `PTR` records mapping addresses back to names:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+128     IN  PTR     www.inlanefreight.htb.
+```
+
+---
+
+## Dangerous Settings
+
+A DNS server can be attacked in many ways. Known vulnerabilities for BIND9 are catalogued at [CVEdetails](https://www.cvedetails.com/product/144/ISC-Bind.html), and [SecurityTrails](https://securitytrails.com/blog/most-popular-types-dns-attacks) maintains a list of the most popular DNS attack types.
+
+The settings most relevant to a pentester are the ones that control who is allowed to query, transfer, and update zones:
+
+| Setting           | Risk                                                                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allow-query`     | Defines who can send queries. Set too broadly, it exposes records to anyone                                                                   |
+| `allow-recursion` | Allows recursive queries — an open resolver can be abused for amplification attacks                                                           |
+| `allow-transfer`  | **The big one** — defines who can request a full zone transfer (AXFR). Set to `any` or a wide subnet, it hands the entire zone to an attacker |
+| `allow-update`    | Defines who can dynamically modify zone records                                                                                               |
+
+<Tip>
+  `allow-transfer { any; };` is the classic misconfiguration. It lets anyone pull the complete zone file — every hostname, internal IP, and subdomain the server knows about — in a single request.
+</Tip>
+
+---
+
+## Footprinting the Service
+
+Footprinting DNS is all about the requests you send and what the server is willing to disclose in response. The workhorse tool is `dig`.
+
+### NS Query — Find the Name Servers
+
+Start by asking the server which name servers it knows about. The `NS` record reveals them, and the `@` character specifies which DNS server to query:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+dig NS inlanefreight.htb @10.129.14.128
+```
+
+```
+; <<>> DiG 9.16.1-Ubuntu <<>> NS inlanefreight.htb @10.129.14.128
+;; ANSWER SECTION:
+inlanefreight.htb.   604800  IN  NS  ns.inlanefreight.htb.
+
+;; ADDITIONAL SECTION:
+ns.inlanefreight.htb.  604800  IN  A  10.129.14.128
+```
+
+If other name servers exist, you can query them too.
+
+### Version Query
+
+Sometimes you can fish the server's version out of a **CHAOS class, TXT type** query. The entry has to exist on the server for this to work, but when it does, it's free version intel for CVE matching:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+dig CH TXT version.bind @10.129.14.128
+```
+
+```
+;; ANSWER SECTION:
+version.bind.   0   CH  TXT  "9.16.1-Ubuntu"
+```
+
+### ANY Query — Show Everything
+
+The `ANY` option asks the server to return every record it's willing to disclose. Note that not all entries from a zone will necessarily show up:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+dig ANY inlanefreight.htb @10.129.14.128
+```
+
+```
+;; ANSWER SECTION:
+inlanefreight.htb.   604800  IN  NS   ns.inlanefreight.htb.
+inlanefreight.htb.   604800  IN  A    10.129.14.128
+inlanefreight.htb.   604800  IN  MX   10 mail1.inlanefreight.htb.
+inlanefreight.htb.   604800  IN  TXT  "v=spf1 include:inlanefreight.htb ..."
+```
+
+### AXFR Zone Transfer — The Jackpot
+
+A **zone transfer** copies a zone from one server to another, normally over **TCP port 53**. The procedure is abbreviated **AXFR** (Asynchronous Full Transfer Zone). Servers normally authenticate each other with a shared secret (the `rndc-key` you'd see in the config), but if `allow-transfer` is misconfigured, anyone can request the whole zone:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+dig AXFR inlanefreight.htb @10.129.14.128
+```
+
+```
+;; ANSWER SECTION:
+inlanefreight.htb.       SOA    ns.inlanefreight.htb. ...
+inlanefreight.htb.       NS     ns.inlanefreight.htb.
+inlanefreight.htb.       A      10.129.14.128
+ns.inlanefreight.htb.    A      10.129.14.128
+www.inlanefreight.htb.   A      10.129.14.128
+mail1.inlanefreight.htb. A      10.129.18.201
+dev.inlanefreight.htb.   A      10.129.18.230
+internal.inlanefreight.htb. A   10.129.1.6
+```
+
+That single command just handed you every hostname and IP the server knows — including internal ones.
+
+### AXFR Across Subdomains
+
+If the administrator set `allow-transfer` to a subnet or to `any`, you can query the entire zone file — and pivot to other zones, which may expose internal IP addresses and hostnames you wouldn't otherwise see:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+dig AXFR internal.inlanefreight.htb @10.129.14.128
+```
+
+### Subdomain Brute-Forcing
+
+When zone transfer is locked down, you can still discover individual `A` records by brute-forcing hostnames against a wordlist. **SecLists** provides good ones.
+
+A simple Bash for-loop sends a query per candidate and keeps the hits:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+for sub in $(cat /opt/useful/SecLists/Discovery/DNS/subdomains-top1million-110000.txt); do
+  dig $sub.inlanefreight.htb @10.129.14.128 | grep -v ';\|SOA' | sed -r '/^\s*$/d' | grep $sub | tee -a subdomains.txt
+done
+```
+
+Most dedicated tools work the same way under the hood. **DNSenum** is a common one:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+dnsenum --dnsserver 10.129.14.128 --enum -p 0 -s 0 -o subdomains.txt \
+  -f /opt/useful/SecLists/Discovery/DNS/subdomains-top1million-110000.txt inlanefreight.htb
+```
+
+```
+dnsenum VERSION:1.2.6
+-----   inlanefreight.htb   -----
+Brute forcing with /opt/useful/SecLists/Discovery/DNS/subdomains-top1million-110000.txt:
+__________________________________________________________________
+ns.inlanefreight.htb.        604800  IN  A  10.129.14.128
+mail1.inlanefreight.htb.     604800  IN  A  10.129.18.201
+www.inlanefreight.htb.       604800  IN  A  10.129.14.128
+dev.inlanefreight.htb.       604800  IN  A  10.129.18.230
+```
+
+---
+
+## Quick Reference
+
+| Command                                               | Purpose                      |
+| ----------------------------------------------------- | ---------------------------- |
+| `dig NS <domain> @<server>`                           | List the zone's name servers |
+| `dig CH TXT version.bind @<server>`                   | Disclose the BIND version    |
+| `dig ANY <domain> @<server>`                          | Show all disclosable records |
+| `dig AXFR <domain> @<server>`                         | Attempt a full zone transfer |
+| `dnsenum --dnsserver <server> -f <wordlist> <domain>` | Brute-force subdomains       |
+
+**The footprinting flow:** NS query → version query → ANY query → attempt AXFR → fall back to subdomain brute-forcing if AXFR is refused.
+
+---
+
+_Next: [FTP](/tech/services/ftp) — anonymous logins, banner grabbing, and pulling files off misconfigured file servers._

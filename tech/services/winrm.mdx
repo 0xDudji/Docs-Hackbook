@@ -1,0 +1,87 @@
+# WinRM
+
+> WinRM is remote PowerShell — and if your credentials land you in the Remote Management Users group, it gives you a clean, fully-featured shell on the target. On a Windows engagement, finding open WinRM with working creds is one of the most direct paths to interactive access.
+
+<Note>**Protocol:** TCP · **Ports:** 5985 (HTTP) · 5986 (HTTPS)</Note>
+
+---
+
+## What Is WinRM?
+
+**Windows Remote Management (WinRM)** is Windows' built-in, command-line-based remote management protocol. It uses **SOAP** (Simple Object Access Protocol) to connect to remote hosts and their applications. From Windows 10 onward it must be **explicitly enabled and configured** — it's not on by default on workstations.
+
+WinRM communicates over **TCP 5985 (HTTP)** and **5986 (HTTPS)**. In practice you'll often see only HTTP (5985) in use rather than the encrypted 5986.
+
+A companion component is **WinRS (Windows Remote Shell)**, which executes arbitrary commands on the remote system. It's included by default as far back as Windows 7.
+
+The account you use needs to be in the **Remote Management Users** group (or be an administrator) to connect.
+
+---
+
+## Footprinting the Service
+
+### Nmap
+
+Scan the two WinRM ports. Seeing 5985 open (and 5986 often closed) is the common case:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+nmap -sV -p5985,5986 10.129.14.128
+```
+
+```
+PORT     STATE SERVICE VERSION
+5985/tcp open  http    Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+5986/tcp closed wsmans
+```
+
+### Test-WsMan — Check Reachability from Windows
+
+From a Windows host, the `Test-WsMan` cmdlet confirms whether a remote server is reachable via WinRM:
+
+```powershell theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+Test-WsMan 10.129.14.128
+```
+
+```
+wsmid           : http://schemas.dmtf.org/wbem/wsman/identity/1/wsmanidentity.xsd
+ProtocolVersion : http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd
+ProductVendor   : Microsoft Corporation
+ProductVersion  : OS: 10.0.17763 SP: 0.0 Stack: 3.0
+```
+
+A response like this means WinRM is up and answering.
+
+### evil-winrm — Connect from Linux
+
+On Linux, `evil-winrm` is the go-to tool for interacting with WinRM. With valid credentials it drops you into a clean PowerShell session:
+
+```bash theme={"theme":{"light":"github-light","dark":"tokyo-night"}}
+evil-winrm -i 10.129.14.128 -u admin -p Password123
+```
+
+```
+Evil-WinRM shell v3.5
+Info: Establishing connection to remote endpoint
+*Evil-WinRM* PS C:\Users\admin\Documents>
+```
+
+<Tip>
+  `evil-winrm` also supports **pass-the-hash** (`-H <NTLM_hash>`), so a recovered hash works just as well as a password — no cracking required. It has built-in helpers for uploading files and loading scripts, making it the natural first stop once you've found admin or Remote Management Users credentials.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Command                                  | Purpose                         |
+| ---------------------------------------- | ------------------------------- |
+| `nmap -sV -p5985,5986 <ip>`              | Detect WinRM (HTTP/HTTPS)       |
+| `Test-WsMan <ip>`                        | Check reachability from Windows |
+| `evil-winrm -i <ip> -u <user> -p <pass>` | Connect from Linux              |
+| `evil-winrm -i <ip> -u <user> -H <hash>` | Connect via pass-the-hash       |
+
+**The footprinting flow:** nmap for 5985/5986 → confirm with Test-WsMan → connect with evil-winrm using found credentials or a recovered hash.
+
+---
+
+_Next: [WMI](/tech/services/wmi) — Windows Management Instrumentation and remote command execution._
